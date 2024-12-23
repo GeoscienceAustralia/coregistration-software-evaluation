@@ -2,3 +2,4 @@ data/inputs/*
 data/outputs/*
 data/asf/*
 arosics/*
+__pycache__/*
