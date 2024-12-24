@@ -14,6 +14,8 @@ from rasterio.warp import calculate_default_transform, reproject
 import numpy as np
 import imageio
 import cv2 as cv
+from pyproj import Proj
+from rasterio.coords import BoundingBox
 
 
 def get_s1_filenames(
@@ -258,8 +260,8 @@ def downsample_dataset(
         profile = dataset.profile
         profile.update(
             transform = transform,
-            width = data.shape[1],
-            height = data.shape[2],
+            width = data.shape[2],
+            height = data.shape[1],
         )
 
     if output_file != "":
@@ -477,3 +479,33 @@ def plot_scene_s2(data, data_transform):
     _, (axt, axb) = plt.subplots(1,2, figsize=(10, 20))
     show(enhance_color_s2(data[1]), ax=axb, title="Single color band (B)", cmap="Blues", transform=data_transform)
     show(enhance_color_s2(data), ax=axt, title="True colour bands image", transform=data_transform)
+
+
+def resize_bbox(bbox, scale_factor = 1.0):
+    x_dim = bbox.right - bbox.left
+    y_dim = bbox.top - bbox.bottom
+
+    dx = ((scale_factor - 1) * x_dim) / 2
+    dy = ((scale_factor - 1) * y_dim) / 2
+
+    return BoundingBox(bbox.left - dx, bbox.bottom - dy, bbox.right + dx, bbox.top + dy)
+
+
+def find_scene_bounding_box_lla(scene:str, scale_factor = 1.0):
+    raster = rasterio.open(scene)
+    raster_bounds = raster.bounds
+
+    raster_bounds = resize_bbox(raster_bounds, scale_factor)
+
+    raster_crs = raster.crs
+
+    raster_proj = Proj(**raster_crs.data)
+
+    west, south = raster_proj(raster_bounds.left, raster_bounds.bottom, inverse = True)
+    east, north = raster_proj(raster_bounds.right, raster_bounds.top, inverse = True)
+
+    bbox = f"{west},{south},{east},{north}"
+
+    return bbox
+
+    

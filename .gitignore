@@ -3,3 +3,6 @@ data/outputs/*
 data/asf/*
 arosics/*
 __pycache__/*
+*.gif
+*.tif
+*.xml
