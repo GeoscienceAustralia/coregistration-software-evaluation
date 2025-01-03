@@ -218,13 +218,14 @@ def plot_scenes_s1(data, data_names, data_transforms, is_slc:bool = True):
         ax.set_title(f"{data_names[i]}")
         ax.title.set_size(10)
 
-def get_scenes_dict(data_df:pd.DataFrame, product:str = "", is_s1:bool=True) -> dict:
+def get_scenes_dict(data_df:pd.DataFrame, product:list[str] = [], is_s1:bool=True) -> dict:
     scenes_dict = {}
     id_list = data_df.ID.unique()
     for id in id_list:
         filtered_df = data_df[data_df.ID == id].reset_index(drop=True)
-        if product != "":
-            filtered_df = filtered_df[filtered_df.Path.apply(lambda x: product in x)].reset_index(drop=True)
+        if product != []:
+            for p in product:
+                filtered_df = filtered_df[filtered_df.Path.apply(lambda x: p in x)].reset_index(drop=True)
 
         grouper = filtered_df.Path.apply(lambda r: os.path.split(r)[1].split("_")[5 if is_s1 else 2][0:6])
         secene_list = [list(filtered_df.groupby(grouper))[i][1].Path.iloc[0] for i in range(0, len(grouper.unique()))]
@@ -251,6 +252,9 @@ def downsample_dataset(
             resampling=Resampling.bilinear
         )
 
+        if enhance_function is not None:
+            data = enhance_function(data)
+
         # scale image transform
         transform = dataset.transform * dataset.transform.scale(
             (dataset.width / data.shape[-1]),
@@ -262,6 +266,7 @@ def downsample_dataset(
             transform = transform,
             width = data.shape[2],
             height = data.shape[1],
+            dtype = data.dtype,
         )
 
     if output_file != "":
@@ -269,8 +274,6 @@ def downsample_dataset(
             for i in range(0, profile["count"]):
                 ds.write(data[i], i + 1)
 
-    if enhance_function is not None:
-        data = enhance_function(data)
     return data, transform
 
 def enhance_color_matching(data, uint16:bool=False):
