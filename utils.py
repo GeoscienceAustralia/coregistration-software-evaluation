@@ -511,4 +511,26 @@ def find_scene_bounding_box_lla(scene:str, scale_factor = 1.0):
 
     return bbox
 
-    
+
+def warp_affine_dataset(
+    dataset_path:str, 
+    output_path:str, 
+    translation_x:float = 0.0, 
+    translation_y:float = 0.0, 
+    rotation_angle:float = 0.0, 
+    scale:float = 1.0
+):
+    """
+    Transforms the dataset accroding to given translation, rotation and scale params and writes it to the `output_path` file.
+    """
+    ref = rasterio.open(dataset_path)
+    img = flip_img(ref.read()).copy()
+    img_centre = (img.shape[1]//2, img.shape[0]//2)
+    rotation_mat = cv.getRotationMatrix2D(img_centre, rotation_angle, scale)
+    translation_mat = np.array([[1.0, 0.0, translation_x], [0.0, 1.0, translation_y]])
+    affine_transform = np.matmul(rotation_mat, np.vstack([translation_mat, np.array([0, 0, 1])]))
+    warped_img = cv.warpAffine(img, affine_transform, (img.shape[1], img.shape[0]))
+    profile = ref.profile
+    with rasterio.open(output_path, "w", **profile) as ds:
+            for i in range(0, profile["count"]):
+                ds.write(warped_img[:, :, i], i + 1)
