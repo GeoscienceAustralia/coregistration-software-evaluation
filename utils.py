@@ -339,11 +339,49 @@ def reproject_tif(src_path, dst_path, dst_crs):
                 
 flip_img = lambda img: np.flipud(np.rot90(img.T))
 
+def get_mosaic_params(datasets_paths:list[str], offset:int = 0):
+    lefts = []
+    rights = []
+    tops = []
+    bottoms = []
+    transforms = []
+    for p in datasets_paths:
+        raster = rasterio.open(p)
+        bounds = raster.bounds
+        transform = raster.profile["transform"]
+        lefts.append(bounds.left // transform.a)
+        rights.append(bounds.right // transform.a)
+        tops.append(-1 * bounds.top // transform.e)
+        bottoms.append(-1 * bounds.bottom // transform.e)
+        transforms.append(transform)
+
+    min_left = min(lefts)
+    min_bottom = min(bottoms)
+    max_right = max(rights)
+    max_top = max(tops)
+    min_top = min(tops)
+
+    new_shape = (int(max_top - min_bottom) + offset, int(max_right - min_left) + offset)
+
+    new_transforms = []
+    for t in transforms:
+        new_transforms.append(
+            np.array(
+                [
+                    [1.0, -1 * t.b // t.e, t.c // t.a - min_left],
+                    [t.d // t.a, -1.0, -1 * t.f // t.e - min_top],
+                ]
+            )
+        )
+    return new_shape, new_transforms
+
 def make_difference_gif(
         images_list:list[str], 
         output_path:str, 
         titles_list:list[str] = [], 
-        scale_factor = -1
+        scale_factor = -1,
+        mosaic_scenes:bool = False,
+        mosaic_offset = 0,
     ):
     os.makedirs("temp", exist_ok=True)
     temp_paths = [os.path.join("temp", os.path.basename(f)) for f in images_list]
@@ -353,6 +391,9 @@ def make_difference_gif(
             downsample_dataset(images_list[i], 0.1, p)
     else:
         temp_paths = images_list
+
+    if mosaic_scenes:
+        new_shape, new_transforms = get_mosaic_params(temp_paths, mosaic_offset)
 
     if len(titles_list) > 0:
         assert len(titles_list) == len(images_list), "Length of provided list of titles does not match the number of images."
@@ -373,6 +414,8 @@ def make_difference_gif(
     for i, p in enumerate(temp_paths):
         img = rasterio.open(p).read()
         img = flip_img(img).copy()
+        if mosaic_scenes:
+            img = cv.warpAffine(img, new_transforms[i], (new_shape[1], new_shape[0]))
         cv.putText(img, titles_list[i], org, font, fontScale, color, thickness, cv.LINE_AA)
         images.append(img)
         imageio.mimwrite(output_path, images, loop = 0, fps = 1)

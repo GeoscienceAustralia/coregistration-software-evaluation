@@ -2,7 +2,9 @@ data/inputs/*
 data/outputs/*
 data/asf/*
 arosics/*
+data/gefolki/*
 __pycache__/*
 *.gif
 *.tif
 *.xml
+tools/temp/*
