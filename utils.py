@@ -398,11 +398,11 @@ def adjust_resolutions(
     raster_1 = rasterio.open(dataset_1)
     raster_2 = rasterio.open(dataset_2)
 
-    raster_1_px_size = raster_1.profile["transform"].a
-    raster_1_py_size = -1 * raster_1.profile["transform"].e
+    raster_1_px_size = abs(raster_1.profile["transform"].a)
+    raster_1_py_size = abs(raster_1.profile["transform"].e)
 
-    raster_2_px_size = raster_2.profile["transform"].a
-    raster_2_py_size = -1 * raster_2.profile["transform"].e
+    raster_2_px_size = abs(raster_2.profile["transform"].a)
+    raster_2_py_size = abs(raster_2.profile["transform"].e)
 
     if resampling_resolution == "lower":
         ref_res_x = max(raster_1_px_size, raster_2_px_size)
@@ -427,11 +427,11 @@ def adjust_resolutions(
         dataset_2, raster_2_scale_factors, output_path_2
     )
 
-    raster_1_px_size = raster_1_new_transform.a
-    raster_1_py_size = -1 * raster_1_new_transform.e
+    raster_1_px_size = abs(raster_1_new_transform.a)
+    raster_1_py_size = abs(raster_1_new_transform.e)
 
-    raster_2_px_size = raster_2_new_transform.a
-    raster_2_py_size = -1 * raster_2_new_transform.e
+    raster_2_px_size = abs(raster_2_new_transform.a)
+    raster_2_py_size = abs(raster_2_new_transform.e)
     return (raster_1_px_size, raster_1_py_size, raster_2_px_size, raster_2_py_size), (
         raster_1_new_transform,
         raster_2_new_transform,
@@ -456,11 +456,11 @@ def find_overlap(
     bounds_2 = raster_2.bounds
 
     if return_pixels:
-        raster_1_px_size = raster_1.profile["transform"].a
-        raster_1_py_size = -1 * raster_1.profile["transform"].e
+        raster_1_px_size = abs(raster_1.profile["transform"].a)
+        raster_1_py_size = abs(raster_1.profile["transform"].e)
 
-        raster_2_px_size = raster_2.profile["transform"].a
-        raster_2_py_size = -1 * raster_2.profile["transform"].e
+        raster_2_px_size = abs(raster_2.profile["transform"].a)
+        raster_2_py_size = abs(raster_2.profile["transform"].e)
 
         if (raster_1_px_size != raster_2_px_size) or (
             raster_1_py_size != raster_2_py_size
@@ -584,10 +584,10 @@ def make_mosaic(
         raster = rasterio.open(p)
         bounds = raster.bounds
         transform = raster.profile["transform"]
-        lefts.append(bounds.left // transform.a)
-        rights.append(bounds.right // transform.a)
-        tops.append(-1 * bounds.top // transform.e)
-        bottoms.append(-1 * bounds.bottom // transform.e)
+        lefts.append(abs(bounds.left // transform.a))
+        rights.append(abs(bounds.right // transform.a))
+        tops.append(abs(bounds.top // transform.e))
+        bottoms.append(abs(bounds.bottom // transform.e))
         transforms.append(transform)
         rasters.append(raster)
 
@@ -606,8 +606,8 @@ def make_mosaic(
         new_transforms.append(
             np.array(
                 [
-                    [1.0, -1 * t.b // t.e, t.c // t.a - min_left],
-                    [t.d // t.a, 1.0, max_top + t.f // t.e],
+                    [1.0, abs(t.b // t.e), t.c // t.a - min_left],
+                    [t.d // t.a, 1.0, max_top - abs(t.f // t.e)],
                 ]
             )
         )
