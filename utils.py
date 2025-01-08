@@ -17,6 +17,7 @@ import imageio
 import cv2 as cv
 from pyproj import Proj
 from rasterio.coords import BoundingBox
+from typing import Union
 
 
 def get_s1_filenames(
@@ -263,7 +264,7 @@ def get_scenes_dict(
 
 def downsample_dataset(
     dataset_path: str,
-    scale_factor: float,
+    scale_factor: Union[float, list[float]],
     output_file: str = "",
     enhance_function=None,
 ):
@@ -272,11 +273,13 @@ def downsample_dataset(
     """
     with rasterio.open(dataset_path) as dataset:
         # resample data to target shape
+        if type(scale_factor) == float:
+            scale_factor = [scale_factor] * 2
         data = dataset.read(
             out_shape=(
                 dataset.count,
-                int(dataset.height * scale_factor),
-                int(dataset.width * scale_factor),
+                int(dataset.height * scale_factor[0]),
+                int(dataset.width * scale_factor[1]),
             ),
             resampling=Resampling.bilinear,
         )
@@ -385,11 +388,62 @@ def reproject_tif(src_path, dst_path, dst_crs):
 flip_img = lambda img: np.flipud(np.rot90(img.T))
 
 
+def adjust_resolutions(
+    dataset_1: str,
+    dataset_2: str,
+    output_path_1: str,
+    output_path_2: str,
+    resampling_resolution: str = "lower",
+):
+    raster_1 = rasterio.open(dataset_1)
+    raster_2 = rasterio.open(dataset_2)
+
+    raster_1_px_size = raster_1.profile["transform"].a
+    raster_1_py_size = -1 * raster_1.profile["transform"].e
+
+    raster_2_px_size = raster_2.profile["transform"].a
+    raster_2_py_size = -1 * raster_2.profile["transform"].e
+
+    if resampling_resolution == "lower":
+        ref_res_x = max(raster_1_px_size, raster_2_px_size)
+        ref_res_y = max(raster_1_py_size, raster_2_py_size)
+    else:
+        ref_res_x = min(raster_1_px_size, raster_2_px_size)
+        ref_res_y = min(raster_1_py_size, raster_2_py_size)
+
+    raster_1_scale_factors = [
+        raster_1_py_size / ref_res_y,
+        raster_1_px_size / ref_res_x,
+    ]
+    raster_2_scale_factors = [
+        raster_2_py_size / ref_res_y,
+        raster_2_px_size / ref_res_x,
+    ]
+
+    _, raster_1_new_transform = downsample_dataset(
+        dataset_1, raster_1_scale_factors, output_path_1
+    )
+    _, raster_2_new_transform = downsample_dataset(
+        dataset_2, raster_2_scale_factors, output_path_2
+    )
+
+    raster_1_px_size = raster_1_new_transform.a
+    raster_1_py_size = -1 * raster_1_new_transform.e
+
+    raster_2_px_size = raster_2_new_transform.a
+    raster_2_py_size = -1 * raster_2_new_transform.e
+    return (raster_1_px_size, raster_1_py_size, raster_2_px_size, raster_2_py_size), (
+        raster_1_new_transform,
+        raster_2_new_transform,
+    )
+
+
 def find_overlap(
     dataset_1: str,
     dataset_2: str,
     return_pixels: bool = False,
     return_images: bool = False,
+    resampling_resolution: str = "lower",
 ):
     """
     Crude overlap finder for two overlapping scenes. (finds the bounding box around the overlapping area.
@@ -407,6 +461,28 @@ def find_overlap(
 
         raster_2_px_size = raster_2.profile["transform"].a
         raster_2_py_size = -1 * raster_2.profile["transform"].e
+
+        if (raster_1_px_size != raster_2_px_size) or (
+            raster_1_py_size != raster_2_py_size
+        ):
+            print(
+                f"WARNING: Ground resolutions are different for the provided images. Setting it to the {resampling_resolution} resolution."
+            )
+
+            os.makedirs("temp", exist_ok=True)
+            new_pixel_sizes, _ = adjust_resolutions(
+                dataset_1,
+                dataset_2,
+                "temp/scaled_raster_1.tif",
+                "temp/scaled_raster_2.tif",
+                resampling_resolution,
+            )
+            dataset_1 = "temp/scaled_raster_1.tif"
+            dataset_2 = "temp/scaled_raster_2.tif"
+
+            raster_1_px_size, raster_1_py_size, raster_2_px_size, raster_2_py_size = (
+                new_pixel_sizes
+            )
 
         min_left = min(
             bounds_1.left // raster_1_px_size, bounds_2.left // raster_2_px_size
@@ -478,6 +554,8 @@ def find_overlap(
             :,
         ]
 
+    shutil.rmtree("temp", ignore_errors=True)
+
     return overlap_in_mosaic, (
         mosaic,
         mosaic_overlap,
@@ -494,6 +572,7 @@ def make_mosaic(
 ):
     """
     Creates a mosaic of overlapping scenes. Offsets will be added to the size of the final mosaic if specified.
+    NOTE: dataset ground resolutions should be the same. Use `adjust_resolutions` function to fix the unequal resolutions.
     """
     lefts = []
     rights = []
