@@ -580,6 +580,8 @@ def make_mosaic(
     bottoms = []
     transforms = []
     rasters = []
+    ps_x = []
+    ps_y = []
     for p in dataset_paths:
         raster = rasterio.open(p)
         bounds = raster.bounds
@@ -590,6 +592,12 @@ def make_mosaic(
         bottoms.append(abs(bounds.bottom // transform.e))
         transforms.append(transform)
         rasters.append(raster)
+        ps_x.append(abs(round(transform.a)))
+        ps_y.append(abs(round(transform.e)))
+
+    assert (all(ps == ps_x[0] for ps in ps_x)) and (
+        all(ps == ps_y[0] for ps in ps_y)
+    ), "Ground resolutions are different for datasets. Please use `adjust_resolutions` function first to fix the issue."
 
     min_left = min(lefts)
     min_bottom = min(bottoms)
@@ -617,14 +625,35 @@ def make_mosaic(
     for i, rs in enumerate(rasters):
         img = flip_img(rs.read())
         imgw = cv.warpAffine(img, new_transforms[i], (new_shape[1], new_shape[0]))
-        idx = np.where(cv.cvtColor(imgw, cv.COLOR_BGR2GRAY) != 0)
-        mosaic[idx[0], idx[1], :] = imgw[idx[0], idx[1], :]
+
+        if len(imgw.shape) == 2:
+            idx = np.where(imgw != 0)
+            for i in range(0, 3):
+                mosaic[idx[0], idx[1], i] = imgw[idx[0], idx[1]]
+        else:
+            idx = np.where(cv.cvtColor(imgw, cv.COLOR_BGR2GRAY) != 0)
+            mosaic[idx[0], idx[1], :] = imgw[idx[0], idx[1], :]
         if return_warps:
-            warp = np.zeros((*new_shape, 3)).astype("uint8")
-            warp[idx[0], idx[1], :] = imgw[idx[0], idx[1], :]
+            warp = np.zeros_like(imgw).astype("uint8")
+            if len(imgw.shape) == 2:
+                warp[idx[0], idx[1]] = imgw[idx[0], idx[1]]
+            else:
+                warp[idx[0], idx[1], :] = imgw[idx[0], idx[1], :]
             warps.append(warp)
 
     return mosaic, warps
+
+
+def simple_mosaic(img_list):
+    mosaic = np.zeros_like(img_list[0]).astype("uint8")
+    for img in img_list:
+        if len(img.shape) == 2:
+            idx = np.where(img != 0)
+            mosaic[idx[0], idx[1]] = img[idx[0], idx[1]]
+        else:
+            idx = np.where(cv.cvtColor(img, cv.COLOR_BGR2GRAY) != 0)
+            mosaic[idx[0], idx[1], :] = img[idx[0], idx[1], :]
+    return mosaic
 
 
 def make_difference_gif(
