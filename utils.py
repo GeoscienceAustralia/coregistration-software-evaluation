@@ -395,6 +395,9 @@ def adjust_resolutions(
     output_path_2: str,
     resampling_resolution: str = "lower",
 ):
+    """
+    Adjusts the resolutions for two datasets with different ones. Rounding errors might cause a slightly different output resolutions.
+    """
     raster_1 = rasterio.open(dataset_1)
     raster_2 = rasterio.open(dataset_2)
 
@@ -645,6 +648,10 @@ def make_mosaic(
 
 
 def simple_mosaic(img_list):
+    """
+    A simple mosaic of two image by overlapping the non-zero parts in a consecutive order.
+    Assumes all images are the same size and ignores any transformations.
+    """
     mosaic = np.zeros_like(img_list[0]).astype("uint8")
     for img in img_list:
         if len(img.shape) == 2:
