@@ -389,56 +389,44 @@ flip_img = lambda img: np.flipud(np.rot90(img.T))
 
 
 def adjust_resolutions(
-    dataset_1: str,
-    dataset_2: str,
-    output_path_1: str,
-    output_path_2: str,
+    dataset_paths: list[str],
+    output_paths: list[str],
     resampling_resolution: str = "lower",
 ):
     """
-    Adjusts the resolutions for two datasets with different ones. Rounding errors might cause a slightly different output resolutions.
+    Adjusts the resolutions for two or more datasets with different ones. Rounding errors might cause a slightly different output resolutions.
     """
-    raster_1 = rasterio.open(dataset_1)
-    raster_2 = rasterio.open(dataset_2)
+    ps_x = []
+    ps_y = []
 
-    raster_1_px_size = abs(raster_1.profile["transform"].a)
-    raster_1_py_size = abs(raster_1.profile["transform"].e)
-
-    raster_2_px_size = abs(raster_2.profile["transform"].a)
-    raster_2_py_size = abs(raster_2.profile["transform"].e)
+    for ds in dataset_paths:
+        raster = rasterio.open(ds)
+        raster_px_size = abs(raster.profile["transform"].a)
+        raster_py_size = abs(raster.profile["transform"].e)
+        ps_x.append(raster_px_size)
+        ps_y.append(raster_py_size)
 
     if resampling_resolution == "lower":
-        ref_res_x = max(raster_1_px_size, raster_2_px_size)
-        ref_res_y = max(raster_1_py_size, raster_2_py_size)
+        ref_res_x = max(ps_x)
+        ref_res_y = max(ps_y)
     else:
-        ref_res_x = min(raster_1_px_size, raster_2_px_size)
-        ref_res_y = min(raster_1_py_size, raster_2_py_size)
+        ref_res_x = min(ps_x)
+        ref_res_y = min(ps_y)
 
-    raster_1_scale_factors = [
-        raster_1_py_size / ref_res_y,
-        raster_1_px_size / ref_res_x,
-    ]
-    raster_2_scale_factors = [
-        raster_2_py_size / ref_res_y,
-        raster_2_px_size / ref_res_x,
-    ]
+    scale_factors = []
+    for sx, sy in zip(ps_x, ps_y):
+        scale_factors.append(
+            [
+                sy / ref_res_y,
+                sx / ref_res_x,
+            ]
+        )
 
-    _, raster_1_new_transform = downsample_dataset(
-        dataset_1, raster_1_scale_factors, output_path_1
-    )
-    _, raster_2_new_transform = downsample_dataset(
-        dataset_2, raster_2_scale_factors, output_path_2
-    )
+    transforms = []
+    for i, ds in enumerate(dataset_paths):
+        transforms.append(downsample_dataset(ds, scale_factors[i], output_paths[i])[1])
 
-    raster_1_px_size = abs(raster_1_new_transform.a)
-    raster_1_py_size = abs(raster_1_new_transform.e)
-
-    raster_2_px_size = abs(raster_2_new_transform.a)
-    raster_2_py_size = abs(raster_2_new_transform.e)
-    return (raster_1_px_size, raster_1_py_size, raster_2_px_size, raster_2_py_size), (
-        raster_1_new_transform,
-        raster_2_new_transform,
-    )
+    return ([abs(t.a), abs(t.e), t] for t in transforms)
 
 
 def find_overlap(
@@ -473,19 +461,19 @@ def find_overlap(
             )
 
             os.makedirs("temp", exist_ok=True)
-            new_pixel_sizes, _ = adjust_resolutions(
-                dataset_1,
-                dataset_2,
-                "temp/scaled_raster_1.tif",
-                "temp/scaled_raster_2.tif",
+            outputs = adjust_resolutions(
+                [dataset_1, dataset_2],
+                ["temp/scaled_raster_1.tif", "temp/scaled_raster_2.tif"],
                 resampling_resolution,
             )
             dataset_1 = "temp/scaled_raster_1.tif"
             dataset_2 = "temp/scaled_raster_2.tif"
 
-            raster_1_px_size, raster_1_py_size, raster_2_px_size, raster_2_py_size = (
-                new_pixel_sizes
-            )
+            (raster_1_px_size, raster_1_py_size, _), (
+                raster_2_px_size,
+                raster_2_py_size,
+                _,
+            ) = outputs
 
         min_left = min(
             bounds_1.left // raster_1_px_size, bounds_2.left // raster_2_px_size
@@ -572,35 +560,60 @@ def make_mosaic(
     offset_x: int = 0,
     offset_y: int = 0,
     return_warps: bool = False,
+    resolution_adjustment: bool = False,
+    resampling_resolution: str = "lower",
 ):
     """
     Creates a mosaic of overlapping scenes. Offsets will be added to the size of the final mosaic if specified.
-    NOTE: dataset ground resolutions should be the same. Use `adjust_resolutions` function to fix the unequal resolutions.
+    NOTE: dataset ground resolutions should be the same. Use `resolution_adjustment` flag to fix the unequal resolutions.
     """
+    ps_x = []
+    ps_y = []
+    rasters = []
+    transforms = []
+    for p in dataset_paths:
+        raster = rasterio.open(p)
+        transform = raster.profile["transform"]
+        ps_x.append(abs(round(transform.a)))
+        ps_y.append(abs(round(transform.e)))
+        rasters.append(raster)
+        transforms.append(transform)
+
+    ps_x_condition = all(ps == ps_x[0] for ps in ps_x)
+    ps_y_conditoin = all(ps == ps_y[0] for ps in ps_y)
+    assert (
+        ps_x_condition and ps_y_conditoin
+    ), "Ground resolutions are different for datasets. Please use `resolution_adjustment` flag first to fix the issue."
+
+    if resolution_adjustment:
+        os.makedirs("temp", exist_ok=True)
+        new_dataset_paths = [os.path.join("temp", i) for i in range(len(dataset_paths))]
+        adjust_resolutions(
+            dataset_paths,
+            new_dataset_paths,
+            resampling_resolution,
+        )
+        dataset_paths = new_dataset_paths
+
     lefts = []
     rights = []
     tops = []
     bottoms = []
-    transforms = []
-    rasters = []
-    ps_x = []
-    ps_y = []
-    for p in dataset_paths:
-        raster = rasterio.open(p)
-        bounds = raster.bounds
-        transform = raster.profile["transform"]
+    if resolution_adjustment:
+        rasters = []
+        transforms = []
+        for p in dataset_paths:
+            raster = rasterio.open(p)
+            transform = raster.profile["transform"]
+            rasters.append(raster)
+            transforms.append(transform)
+
+    for r in rasters:
+        bounds = r.bounds
         lefts.append(abs(bounds.left // transform.a))
         rights.append(abs(bounds.right // transform.a))
         tops.append(abs(bounds.top // transform.e))
         bottoms.append(abs(bounds.bottom // transform.e))
-        transforms.append(transform)
-        rasters.append(raster)
-        ps_x.append(abs(round(transform.a)))
-        ps_y.append(abs(round(transform.e)))
-
-    assert (all(ps == ps_x[0] for ps in ps_x)) and (
-        all(ps == ps_y[0] for ps in ps_y)
-    ), "Ground resolutions are different for datasets. Please use `adjust_resolutions` function first to fix the issue."
 
     min_left = min(lefts)
     min_bottom = min(bottoms)
@@ -643,6 +656,9 @@ def make_mosaic(
             else:
                 warp[idx[0], idx[1], :] = imgw[idx[0], idx[1], :]
             warps.append(warp)
+
+    if resolution_adjustment:
+        shutil.rmtree("temp", ignore_errors=True)
 
     return mosaic, warps
 
