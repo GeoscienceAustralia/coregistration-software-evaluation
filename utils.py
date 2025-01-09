@@ -567,6 +567,20 @@ def make_mosaic(
     Creates a mosaic of overlapping scenes. Offsets will be added to the size of the final mosaic if specified.
     NOTE: dataset ground resolutions should be the same. Use `resolution_adjustment` flag to fix the unequal resolutions.
     """
+
+    if resolution_adjustment:
+        os.makedirs("temp", exist_ok=True)
+        new_dataset_paths = [
+            os.path.join("temp", f"scaled_raster_{i}")
+            for i in range(len(dataset_paths))
+        ]
+        adjust_resolutions(
+            dataset_paths,
+            new_dataset_paths,
+            resampling_resolution,
+        )
+        dataset_paths = new_dataset_paths
+
     ps_x = []
     ps_y = []
     rasters = []
@@ -585,29 +599,10 @@ def make_mosaic(
         ps_x_condition and ps_y_conditoin
     ), "Ground resolutions are different for datasets. Please use `resolution_adjustment` flag first to fix the issue."
 
-    if resolution_adjustment:
-        os.makedirs("temp", exist_ok=True)
-        new_dataset_paths = [os.path.join("temp", i) for i in range(len(dataset_paths))]
-        adjust_resolutions(
-            dataset_paths,
-            new_dataset_paths,
-            resampling_resolution,
-        )
-        dataset_paths = new_dataset_paths
-
     lefts = []
     rights = []
     tops = []
     bottoms = []
-    if resolution_adjustment:
-        rasters = []
-        transforms = []
-        for p in dataset_paths:
-            raster = rasterio.open(p)
-            transform = raster.profile["transform"]
-            rasters.append(raster)
-            transforms.append(transform)
-
     for r in rasters:
         bounds = r.bounds
         lefts.append(abs(bounds.left // transform.a))
