@@ -262,6 +262,19 @@ def get_scenes_dict(
     return scenes_dict
 
 
+def readjust_origin_for_new_pixel_size(
+    transform: rasterio.Affine, scale_factor_y: float, scale_factor_x: float
+) -> rasterio.Affine:
+    """
+    Readjusts the origin of a scene after resampling.
+    """
+    new_orig_x = transform.c + ((1 - scale_factor_x) * abs(transform.a) / 2)
+    new_orig_y = transform.f - ((1 - scale_factor_y) * abs(transform.e) / 2)
+    return rasterio.Affine(
+        transform.a, transform.b, new_orig_x, transform.d, transform.e, new_orig_y
+    )
+
+
 def downsample_dataset(
     dataset_path: str,
     scale_factor: Union[float, list[float]],
@@ -291,6 +304,8 @@ def downsample_dataset(
         transform = dataset.transform * dataset.transform.scale(
             (dataset.width / data.shape[-1]), (dataset.height / data.shape[-2])
         )
+
+        transform = readjust_origin_for_new_pixel_size(transform, *scale_factor)
 
         profile = dataset.profile
         profile.update(
@@ -426,7 +441,7 @@ def adjust_resolutions(
     for i, ds in enumerate(dataset_paths):
         transforms.append(downsample_dataset(ds, scale_factors[i], output_paths[i])[1])
 
-    return ([abs(t.a), abs(t.e), t] for t in transforms)
+    return [[abs(t.a), abs(t.e), t] for t in transforms]
 
 
 def find_overlap(
@@ -528,7 +543,7 @@ def find_overlap(
     raster_overlap_2 = None
 
     if return_images:
-        mosaic, warps = make_mosaic([dataset_1, dataset_2], return_warps=True)
+        mosaic, warps, _ = make_mosaic([dataset_1, dataset_2], return_warps=True)
         mosaic_overlap = mosaic[
             overlap_in_mosaic.top : overlap_in_mosaic.bottom,
             overlap_in_mosaic.left : overlap_in_mosaic.right,
@@ -571,7 +586,7 @@ def make_mosaic(
     if resolution_adjustment:
         os.makedirs("temp", exist_ok=True)
         new_dataset_paths = [
-            os.path.join("temp", f"scaled_raster_{i}")
+            os.path.join("temp", f"scaled_raster_{i}.tif")
             for i in range(len(dataset_paths))
         ]
         adjust_resolutions(
@@ -655,7 +670,7 @@ def make_mosaic(
     if resolution_adjustment:
         shutil.rmtree("temp", ignore_errors=True)
 
-    return mosaic, warps
+    return mosaic, warps, new_transforms
 
 
 def simple_mosaic(img_list):
@@ -719,7 +734,7 @@ def make_difference_gif(
         if len(mosaic_offsets_y) == 0:
             mosaic_offsets_y = [0] * len(tgt_scenes)
         for i, p in enumerate(tgt_scenes):
-            img, _ = make_mosaic(
+            img, _, _ = make_mosaic(
                 [ref_scene, p], mosaic_offsets_x[i], mosaic_offsets_y[i]
             )
             cv.putText(
