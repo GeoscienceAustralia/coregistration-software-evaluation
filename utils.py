@@ -20,21 +20,22 @@ from rasterio.coords import BoundingBox
 from typing import Union
 
 
-def get_s1_filenames(
+def get_sentinel_filenames(
     polygon_list: list[str],
     years: list[str],
     output_file_path: str,
     products: list[str] = ["GRD", "SLC"],
     is_poly_bbox: bool = True,
+    satellite: str = "S1",
 ):
     """
     Get scene names for S1 via direct requet to SARA server
     """
-    s1_names = []
+    s_names = []
     if os.path.isfile(output_file_path):
         with open(output_file_path, "r") as f:
             for l in f:
-                s1_names.append(l.strip())
+                s_names.append(l.strip())
     else:
         start = f"{years[0]}-01-01"
         end = f"{years[1]}-12-12"
@@ -43,17 +44,17 @@ def get_s1_filenames(
                 page = 1
                 query_resp = ["start"]
                 while query_resp != []:
-                    query = f"https://copernicus.nci.org.au/sara.server/1.0/api/collections/S1/search.json?_pretty=1&{"box" if is_poly_bbox else "geometry"}={poly}&startDate={start}&completionDate={end}&instrument=C-SAR&sensor=IW&maxRecords=500&productType={prod}&page={page}"
+                    query = f'https://copernicus.nci.org.au/sara.server/1.0/api/collections/{satellite}/search.json?_pretty=1&{"box" if is_poly_bbox else "geometry"}={poly}&startDate={start}&completionDate={end}&instrument=C-SAR&sensor=IW&maxRecords=500&productType={prod}&page={page}'
                     response = json.loads(requests.get(query).content)
                     query_resp = [
                         r["properties"]["title"] for r in response["features"]
                     ]
-                    s1_names.extend(query_resp)
+                    s_names.extend(query_resp)
                     page += 1
         with open(output_file_path, "w") as f:
-            for n in s1_names:
+            for n in s_names:
                 f.write(f"{n}\n")
-    return s1_names
+    return s_names
 
 
 def save_file_list(file_list: dict, save_path: str) -> None:
@@ -974,10 +975,10 @@ def detect_edges(img):
     simple canny edge detector
     """
     out = cv.Canny(img, 100, 200)
-    kernel = np.ones((3,3),np.uint8)
+    kernel = np.ones((3, 3), np.uint8)
     out = cv.dilate(out, kernel, iterations=2)
     out = cv.erode(out, kernel, iterations=3)
-    kernel = np.ones((15,15),np.uint8)
+    kernel = np.ones((15, 15), np.uint8)
     out = cv.morphologyEx(out, cv.MORPH_CLOSE, kernel, iterations=10)
     out = cv.Canny(out, 0, 255)
     return out
