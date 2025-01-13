@@ -262,6 +262,17 @@ def get_scenes_dict(
     return scenes_dict
 
 
+def scale_transform(
+    warp_matrix: np.ndarray, resolution_ratio_y: float, resolution_ratio_x: float
+) -> np.ndarray:
+    scaled_warp = warp_matrix.copy()
+    scaled_warp[:, 0] /= resolution_ratio_x
+    scaled_warp[:, 1] /= resolution_ratio_y
+    scaled_warp[0, 2] += (1 - resolution_ratio_x) * abs(scaled_warp[0, 0]) / 2
+    scaled_warp[1, 2] -= (1 - resolution_ratio_y) * abs(scaled_warp[1, 1]) / 2
+    return scaled_warp
+
+
 def readjust_origin_for_new_pixel_size(
     transform: rasterio.Affine, scale_factor_y: float, scale_factor_x: float
 ) -> rasterio.Affine:
