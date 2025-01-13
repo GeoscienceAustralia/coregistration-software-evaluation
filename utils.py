@@ -967,3 +967,17 @@ def warp_affine_dataset(
                 ds.write(warped_img[:, :, i], i + 1)
 
     return warped_img
+
+
+def detect_edges(img):
+    """
+    simple canny edge detector
+    """
+    out = cv.Canny(img, 100, 200)
+    kernel = np.ones((3,3),np.uint8)
+    out = cv.dilate(out, kernel, iterations=2)
+    out = cv.erode(out, kernel, iterations=3)
+    kernel = np.ones((15,15),np.uint8)
+    out = cv.morphologyEx(out, cv.MORPH_CLOSE, kernel, iterations=10)
+    out = cv.Canny(out, 0, 255)
+    return out
