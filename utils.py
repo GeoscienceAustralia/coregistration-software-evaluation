@@ -18,15 +18,21 @@ import cv2 as cv
 from pyproj import Proj
 from rasterio.coords import BoundingBox
 from typing import Union
+from itertools import product as itrprod
+import re
 
 
 def get_sentinel_filenames(
     polygon_list: list[str],
     years: list[str],
-    output_file_path: str,
     products: list[str] = ["GRD", "SLC"],
     is_poly_bbox: bool = True,
     satellite: str = "S1",
+    instrument: str = "C-SAR",
+    identifier: str = "",
+    output_file_path: str = "",
+    includes: list[str] = [],
+    return_query_only: bool = False,
 ):
     """
     Get scene names for S1 via direct requet to SARA server
@@ -38,22 +44,69 @@ def get_sentinel_filenames(
                 s_names.append(l.strip())
     else:
         start = f"{years[0]}-01-01"
-        end = f"{years[1]}-12-12"
-        for poly in polygon_list:
-            for prod in products:
-                page = 1
-                query_resp = ["start"]
-                while query_resp != []:
-                    query = f'https://copernicus.nci.org.au/sara.server/1.0/api/collections/{satellite}/search.json?_pretty=1&{"box" if is_poly_bbox else "geometry"}={poly}&startDate={start}&completionDate={end}&instrument=C-SAR&sensor=IW&maxRecords=500&productType={prod}&page={page}'
-                    response = json.loads(requests.get(query).content)
+        end = f"{years[1]}-12-31"
+        query = f"https://copernicus.nci.org.au/sara.server/1.0/api/collections/{satellite}/search.json?_pretty=1&startDate={start}&completionDate={end}&instrument={instrument}&maxRecords=500"
+
+        if satellite == "S1":
+            query += "&sensor=IW"
+        else:
+            products = []
+
+        if identifier != "":
+            query += f"&identifier={identifier}"
+
+        if len(polygon_list) == 0:
+            polygon_list = [""]
+        if len(products) == 0:
+            products = [""]
+
+        for poly, prod in list(itrprod(polygon_list, products)):
+            if poly == "":
+                poly_query = ""
+            else:
+                poly_query = f'&{"box" if is_poly_bbox else "geometry"}={poly}'
+
+            if prod == "":
+                prod_query = ""
+            else:
+                prod_query = f"&productType={prod}"
+
+            no_page_query = query + poly_query + prod_query
+
+            page = 1
+            query_resp = ["start"]
+            while query_resp != []:
+                to_query = no_page_query + f"&page={page}"
+                if return_query_only:
+                    s_names.append(to_query)
+                else:
+                    print(f"Querying: {to_query}", end="\r")
+                    response = json.loads(requests.get(to_query).content)
+                    if "features" not in response:
+                        query_resp = []
+                        continue
                     query_resp = [
                         r["properties"]["title"] for r in response["features"]
                     ]
                     s_names.extend(query_resp)
-                    page += 1
-        with open(output_file_path, "w") as f:
-            for n in s_names:
-                f.write(f"{n}\n")
+                if return_query_only:
+                    break
+                page += 1
+
+        if (return_query_only) and (len(includes) != 0):
+            print("Filtering the outputs does not work in return query only mode.")
+        else:
+            filtered_list = []
+            for p in includes:
+                filtered_list.extend(
+                    list(filter(lambda el: len(re.findall(p, el)) != 0, s_names))
+                )
+            s_names = list(set(filtered_list))
+
+        if output_file_path != "":
+            with open(output_file_path, "w") as f:
+                for n in s_names:
+                    f.write(f"{n}\n")
     return s_names
 
 
@@ -84,7 +137,7 @@ async def find_aoi_files(aoi: str, all_files: list[str]) -> list[str]:
     Filters all files and finds files for the area of interest.
     """
     print(f"filtering files for {aoi}", end="\r")
-    return list(filter(lambda p: aoi in p, all_files))
+    return list(filter(lambda p: len(re.findall(aoi, p)) != 0, all_files))
 
 
 def flatten(l: list[list]) -> list:
