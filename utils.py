@@ -762,6 +762,7 @@ def make_difference_gif(
     mosaic_scenes: bool = False,
     mosaic_offsets_x: list[int] = [],
     mosaic_offsets_y: list[int] = [],
+    fps: int = 1,
 ):
     os.makedirs("temp", exist_ok=True)
     temp_paths = [os.path.join("temp", os.path.basename(f)) for f in images_list]
@@ -829,7 +830,7 @@ def make_difference_gif(
             )
             images.append(img)
 
-    imageio.mimwrite(output_path, images, loop=0, fps=1)
+    imageio.mimwrite(output_path, images, loop=0, fps=fps)
     shutil.rmtree("temp", ignore_errors=True)
 
 
