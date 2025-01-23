@@ -20,6 +20,9 @@ from rasterio.coords import BoundingBox
 from typing import Union
 from itertools import product as itrprod
 import re
+from sklearn.decomposition import PCA
+from skimage.metrics import structural_similarity as ssim
+from skimage.metrics import mean_squared_error as mse
 
 
 def get_sentinel_filenames(
@@ -1036,3 +1039,236 @@ def detect_edges(img):
     out = cv.morphologyEx(out, cv.MORPH_CLOSE, kernel, iterations=10)
     out = cv.Canny(out, 0, 255)
     return out
+
+
+def co_register(
+    reference: Union[str, np.ndarray],
+    targets=Union[
+        str, np.ndarray, list[str], list[np.ndarray], list[Union[str, np.ndarray]]
+    ],
+    filtering_mode: str = "of",
+    number_of_iterations=10,
+    termination_eps=1e-5,
+    of_params: dict = dict(
+        # params for ShiTomasi corner detection
+        feature_params=dict(
+            maxCorners=100,
+            qualityLevel=0.3,
+            minDistance=7,
+            blockSize=7,
+        ),
+        # Parameters for lucas kanade optical flow
+        lk_params=dict(
+            winSize=(50, 50),
+            maxLevel=2,
+        ),
+    ),
+    output_path: str = "",
+    export_outputs: bool = True,
+    generate_gif: bool = True,
+    generate_csv: bool = True,
+    fps: int = 3,
+    of_dist_thresh: int = 5,  # pixels
+    pca_dist_thresh: int = 25,  # pixels
+    filter_by_ground_res: bool = False,
+    ground_resolution: float = 10.0,  # meters
+    ground_resolution_limit: float = 10.0,  # meters
+    grey_output: bool = True,
+) -> tuple:
+
+    if filtering_mode == "pca":
+        pca = PCA(2)
+    else:
+        params_dict = of_params
+        criteria = (
+            cv.TERM_CRITERIA_EPS | cv.TERM_CRITERIA_COUNT,
+            number_of_iterations,
+            termination_eps,
+        )
+
+    if type(reference) == str:
+        ref_img = cv.cvtColor(
+            flip_img(rasterio.open(reference).read().copy()), cv.COLOR_BGR2GRAY
+        )
+    else:
+        if len(reference.shape) == 2:
+            ref_img = reference
+        else:
+            ref_img = cv.cvtColor(reference, cv.COLOR_BGR2GRAY)
+
+    if (type(targets) == str) or (type(targets) == np.ndarray):
+        targets = [targets]
+
+    tgt_imgs = []
+    tgt_origs = []
+    for tgt in targets:
+        if type(tgt) == str:
+            img = flip_img(rasterio.open(tgt).read().copy())
+            tgt_imgs.append(cv.cvtColor(img, cv.COLOR_BGR2GRAY))
+            tgt_origs.append(img)
+        else:
+            if len(tgt.shape) == 2:
+                tgt_imgs.append(tgt)
+            else:
+                tgt_imgs.append(cv.cvtColor(tgt, cv.COLOR_BGR2GRAY))
+            tgt_origs.append(tgt)
+
+    if generate_gif:
+        export_outputs = True
+    if export_outputs or generate_gif:
+        if (type(reference) != str) or (any(type(el) != str for el in targets)):
+            print(
+                "To genrate output GeoTiffs or GIF animation all inputs should be string paths to input scenes. Setting related flags to False."
+            )
+            export_outputs = False
+            generate_gif = False
+            generate_csv = False
+    if export_outputs:
+        os.makedirs(output_path, exist_ok=True)
+
+    tgt_aligned_list = []
+    processed_tgt_images = []
+    processed_output_images = []
+    shifts = []
+
+    temp_dir = "temp/outputs"
+    os.makedirs(temp_dir, exist_ok=True)
+    for i, tgt_img in enumerate(tgt_imgs):
+        try:
+            if filtering_mode == "pca":
+                pca_diff = pca.fit_transform(ref_img - tgt_img)
+                pca_idx = np.where(abs(pca_diff[:, 1]) < pca_dist_thresh)
+
+                ref_good = ref_img[pca_idx]
+                tgt_good = tgt_img[pca_idx]
+            else:
+                p0 = cv.goodFeaturesToTrack(
+                    ref_img, mask=None, **params_dict["feature_params"]
+                )
+                p1, st, _ = cv.calcOpticalFlowPyrLK(
+                    ref_img,
+                    tgt_img,
+                    p0,
+                    None,
+                    **params_dict["lk_params"],
+                    criteria=criteria,
+                )
+                # ref_good = np.squeeze(p0[st == 1]).astype("int")
+                # tgt_good = np.squeeze(p1[st == 1]).astype("int")
+                dist = np.linalg.norm(p1[st == 1] - p0[st == 1], axis=1)
+                of_idx = np.where(np.squeeze(dist) < of_dist_thresh)
+                ref_good = np.squeeze(p0)[of_idx].astype("int")
+                tgt_good = np.squeeze(p1)[of_idx].astype("int")
+                valid_idx = np.all(
+                    (
+                        tgt_good[:, 0] >= 0,
+                        tgt_good[:, 1] >= 0,
+                        tgt_good[:, 0] < tgt_img.shape[1],
+                        tgt_good[:, 1] < tgt_img.shape[0],
+                    ),
+                    axis=0,
+                )
+                tgt_good = tgt_good[valid_idx]
+                ref_good = ref_good[valid_idx]
+                if (ref_good.shape[0] == 0) or (tgt_good.shape == 0):
+                    print(
+                        f"WARNING: couldn't find any good features for target or reference. num ref features: {ref_good.shape[0]}, num tgt features = {tgt_good.shape[0]}"
+                    )
+                ref_good = np.expand_dims(
+                    ref_img[(ref_good[:, 1], ref_good[:, 0])], axis=0
+                )
+                tgt_good = np.expand_dims(
+                    tgt_img[(tgt_good[:, 1], tgt_good[:, 0])], axis=0
+                )
+
+            ((shift_x, shift_y), _) = cv.phaseCorrelate(
+                np.float32(tgt_good), np.float32(ref_good), None
+            )
+            shifts.append((shift_x, shift_y))
+
+            if (filter_by_ground_res) and (
+                (abs(shift_x * ground_resolution) > ground_resolution_limit)
+                or (abs(shift_y * ground_resolution) > ground_resolution_limit)
+            ):
+                print(f"Shifts too high for target {i}. Ignoring the scene.")
+                tgt_aligned_list.append(np.zeros(0))
+                continue
+
+            tgt_aligned = warp_affine_dataset(
+                tgt_img, translation_x=shift_x, translation_y=shift_y
+            )
+            tgt_aligned_list.append(tgt_aligned)
+
+            if export_outputs:
+                temp_path = os.path.join(temp_dir, f"out_{i}.tiff")
+                processed_output_images.append(temp_path)
+                processed_tgt_images.append(targets[i])
+                profile = rasterio.open(targets[i]).profile
+                if grey_output:
+                    warped = tgt_aligned
+                else:
+                    warped = warp_affine_dataset(
+                        tgt_origs[i], translation_x=shift_x, translation_y=shift_y
+                    )
+                with rasterio.open(temp_path, "w", **profile) as ds:
+                    for i in range(0, profile["count"]):
+                        if grey_output:
+                            ds.write(warped, i + 1)
+                        else:
+                            ds.write(warped[:, :, i], i + 1)
+        except Exception as e:
+            print(f"Algorithm did not converge for target {i} for the reason below:")
+            print(e)
+            tgt_aligned_list.append(np.zeros(0))
+
+    if generate_gif:
+        out_gif = os.path.join(output_path, f"{filtering_mode}_pc.gif")
+        fids = [
+            int(os.path.splitext(os.path.basename(tgt))[0].split("_")[-1])
+            for tgt in processed_output_images
+        ]
+        target_titles = [f"target_{id}" for id in fids]
+
+        if os.path.isfile(out_gif):
+            os.remove(out_gif)
+        datasets_paths = [reference] + processed_output_images
+        ssims_aligned = [
+            np.round(ssim(ref_img, tgt_aligned_list[id], win_size=3), 3) for id in fids
+        ]
+        mse_aligned = [np.round(mse(ref_img, tgt_aligned_list[id]), 3) for id in fids]
+        datasets_titles = ["Reference"] + [
+            f"{target_title}, ssim:{ssim_score}, mse:{mse_score}"
+            for target_title, ssim_score, mse_score in zip(
+                target_titles, ssims_aligned, mse_aligned
+            )
+        ]
+        make_difference_gif(datasets_paths, out_gif, datasets_titles, fps=fps)
+
+        out_gif = os.path.join(output_path, f"raw_{filtering_mode}_pc.gif")
+        if os.path.isfile(out_gif):
+            os.remove(out_gif)
+        datasets_paths = [reference] + processed_tgt_images
+        ssims_raw = [
+            np.round(ssim(ref_img, tgt_imgs[id], win_size=3), 3) for id in fids
+        ]
+        mse_raw = [np.round(mse(ref_img, tgt_imgs[id]), 3) for id in fids]
+        datasets_titles = ["Reference"] + [
+            f"{target_title}, ssim:{ssim_score}, mse:{mse_score}"
+            for target_title, ssim_score, mse_score in zip(
+                target_titles, ssims_raw, mse_raw
+            )
+        ]
+        make_difference_gif(datasets_paths, out_gif, datasets_titles, fps=fps)
+
+        if generate_csv:
+            out_ssim = os.path.join(output_path, f"{filtering_mode}_pc.csv")
+            out_ssim_df = pd.DataFrame(
+                zip(target_titles, ssims_raw, ssims_aligned, mse_raw, mse_aligned),
+                columns=["Title", "SSIM Raw", "SSIM Aligned", "MSE Raw", "MSE Aligned"],
+                index=None,
+            )
+            out_ssim_df.to_csv(out_ssim, encoding="utf-8")
+
+    shutil.rmtree(temp_dir, ignore_errors=True)
+
+    return tgt_aligned_list, shifts
