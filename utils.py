@@ -1041,12 +1041,85 @@ def detect_edges(img):
     return out
 
 
+def find_cells(img, points, window_size, invert_points=False):
+    if invert_points:
+        points = np.column_stack([points[:, 1], points[:, 0]])
+    h = img.shape[0]
+    w = img.shape[1]
+    cells = []
+    sx = window_size[0] // 2
+    sy = window_size[1] // 2
+    for p in points:
+        l_h = p[0] - sx
+        u_h = p[0] + sx
+        l_w = p[1] - sy
+        u_w = p[1] + sy
+        h_range = (np.clip(l_h, 0, l_h), np.clip(u_h, u_h, h))
+        w_range = (np.clip(l_w, 0, l_w), np.clip(u_w, u_w, w))
+        cells.append(img[h_range[0] : h_range[1], w_range[0] : w_range[1]])
+    return cells
+
+
+def find_corrs_shifts(
+    ref_img,
+    tgt_img,
+    ref_points,
+    tgt_points,
+    inliers=[],
+    corr_win_size=(15, 15),
+    corr_thresh=0.75,
+    drop_unbound=True,
+    invert_points=True,
+):
+    ref_points = ref_points[0, :, :].astype("int")
+    tgt_points = tgt_points[0, :, :].astype("int")
+    if len(inliers) != 0:
+        ref_points = ref_points[inliers.ravel().astype(bool)]
+        tgt_points = tgt_points[inliers.ravel().astype(bool)]
+        if (len(ref_points) == 0) or (len(tgt_points) == 0):
+            print("Could not find enough points in the images.")
+            return np.inf, np.inf
+
+    ref_cells = find_cells(
+        ref_img,
+        ref_points,
+        corr_win_size,
+        invert_points,
+    )
+    tgt_cells = find_cells(
+        tgt_img,
+        tgt_points,
+        corr_win_size,
+        invert_points,
+    )
+
+    if drop_unbound:
+        final_ref_cells = []
+        final_tgt_cells = []
+        for ref, tgt in zip(ref_cells, tgt_cells):
+            if ref.shape == tgt.shape:
+                final_ref_cells.append(ref)
+                final_tgt_cells.append(tgt)
+    else:
+        final_ref_cells = ref_cells
+        final_tgt_cells = tgt_cells
+
+    corrs = []
+    for ref, tgt in zip(final_ref_cells, final_tgt_cells):
+        corrs.append(cv.phaseCorrelate(np.float32(tgt), np.float32(ref), None))
+    corrs = [c[0] for c in corrs if c[1] > corr_thresh]
+
+    shift_x = np.mean([c[0] for c in corrs])
+    shift_y = np.mean([c[1] for c in corrs])
+    return shift_x, shift_y
+
+
 def co_register(
     reference: Union[str, np.ndarray],
     targets=Union[
         str, np.ndarray, list[str], list[np.ndarray], list[Union[str, np.ndarray]]
     ],
-    filtering_mode: str = "of",
+    filtering_mode: str = "of",  # "of", "pca" or "pca_of"
     number_of_iterations=10,
     termination_eps=1e-5,
     of_params: dict = dict(
@@ -1074,17 +1147,19 @@ def co_register(
     ground_resolution: float = 10.0,  # meters
     ground_resolution_limit: float = 10.0,  # meters
     grey_output: bool = True,
+    corr_win_size: tuple = (15, 15),
+    corr_thresh: float = 0.75,
+    enhanced_shift_method: str = "",  # empty, "mean" or "corr"
+    remove_outlilers: bool = True,
 ) -> tuple:
 
-    if filtering_mode == "pca":
-        pca = PCA(2)
-    else:
-        params_dict = of_params
-        criteria = (
-            cv.TERM_CRITERIA_EPS | cv.TERM_CRITERIA_COUNT,
-            number_of_iterations,
-            termination_eps,
-        )
+    pca = PCA(2)
+    params_dict = of_params
+    criteria = (
+        cv.TERM_CRITERIA_EPS | cv.TERM_CRITERIA_COUNT,
+        number_of_iterations,
+        termination_eps,
+    )
 
     if type(reference) == str:
         ref_img = cv.cvtColor(
@@ -1141,13 +1216,27 @@ def co_register(
 
                 ref_good = ref_img[pca_idx]
                 tgt_good = tgt_img[pca_idx]
+
+                ((shift_x, shift_y), _) = cv.phaseCorrelate(
+                    np.float32(tgt_good), np.float32(ref_good), None
+                )
             else:
+                if filtering_mode == "pca_of":
+                    pca_diff = pca.fit_transform(ref_img - tgt_img)
+                    pca_idx = np.where(abs(pca_diff[:, 1]) < pca_dist_thresh)
+
+                    ref_img_pca = ref_img[pca_idx]
+                    tgt_img_pca = tgt_img[pca_idx]
+                else:
+                    ref_img_pca = ref_img.copy()
+                    tgt_img_pca = tgt_img.copy()
+
                 p0 = cv.goodFeaturesToTrack(
-                    ref_img, mask=None, **params_dict["feature_params"]
+                    ref_img_pca, mask=None, **params_dict["feature_params"]
                 )
                 p1, st, _ = cv.calcOpticalFlowPyrLK(
-                    ref_img,
-                    tgt_img,
+                    ref_img_pca,
+                    tgt_img_pca,
                     p0,
                     None,
                     **params_dict["lk_params"],
@@ -1163,28 +1252,51 @@ def co_register(
                     (
                         tgt_good[:, 0] >= 0,
                         tgt_good[:, 1] >= 0,
-                        tgt_good[:, 0] < tgt_img.shape[1],
-                        tgt_good[:, 1] < tgt_img.shape[0],
+                        tgt_good[:, 0] < tgt_img_pca.shape[1],
+                        tgt_good[:, 1] < tgt_img_pca.shape[0],
                     ),
                     axis=0,
                 )
-                tgt_good = tgt_good[valid_idx]
-                ref_good = ref_good[valid_idx]
-                if (ref_good.shape[0] == 0) or (tgt_good.shape == 0):
+                tgt_good = np.expand_dims(tgt_good[valid_idx], axis=0)
+                ref_good = np.expand_dims(ref_good[valid_idx], axis=0)
+                if (ref_good.shape[1] < 4) or (tgt_good.shape[1] < 4):
                     print(
-                        f"WARNING: couldn't find any good features for target or reference. num ref features: {ref_good.shape[0]}, num tgt features = {tgt_good.shape[0]}"
+                        f"WARNING: couldn't find enough good features for target or reference. num ref features: {ref_good.shape[0]}, num tgt features = {tgt_good.shape[0]}"
                     )
-                ref_good = np.expand_dims(
-                    ref_img[(ref_good[:, 1], ref_good[:, 0])], axis=0
-                )
-                tgt_good = np.expand_dims(
-                    tgt_img[(tgt_good[:, 1], tgt_good[:, 0])], axis=0
-                )
+                h, inliers = cv.estimateAffine2D(tgt_good, ref_good)
 
-            ((shift_x, shift_y), _) = cv.phaseCorrelate(
-                np.float32(tgt_good), np.float32(ref_good), None
-            )
+                if enhanced_shift_method == "":
+                    shift_x = h[0, 2]
+                    shift_y = h[1, 2]
+                else:
+                    if enhanced_shift_method == "corr":
+                        if not remove_outlilers:
+                            inliers = []
+                        shift_x, shift_y = find_corrs_shifts(
+                            ref_img_pca,
+                            tgt_img_pca,
+                            ref_good,
+                            tgt_good,
+                            inliers,
+                            corr_win_size,
+                            corr_thresh,
+                        )
+                    else:
+                        ref_good_temp = ref_good[0, :, :]
+                        tgt_good_temp = tgt_good[0, :, :]
+                        if remove_outlilers:
+                            ref_good_temp = ref_good_temp[inliers.ravel().astype(bool)]
+                            tgt_good_temp = tgt_good_temp[inliers.ravel().astype(bool)]
+                        shift_x, shift_y = np.mean(
+                            ref_good_temp - tgt_good_temp, axis=0
+                        )
+
             shifts.append((shift_x, shift_y))
+
+            if shift_x == np.inf:
+                print(f"No valid shifts found.")
+                tgt_aligned_list.append(np.zeros(0))
+                continue
 
             if (filter_by_ground_res) and (
                 (abs(shift_x * ground_resolution) > ground_resolution_limit)
@@ -1222,7 +1334,7 @@ def co_register(
             tgt_aligned_list.append(np.zeros(0))
 
     if generate_gif:
-        out_gif = os.path.join(output_path, f"{filtering_mode}_pc.gif")
+        out_gif = os.path.join(output_path, f"{filtering_mode}.gif")
         fids = [
             int(os.path.splitext(os.path.basename(tgt))[0].split("_")[-1])
             for tgt in processed_output_images
@@ -1244,7 +1356,7 @@ def co_register(
         ]
         make_difference_gif(datasets_paths, out_gif, datasets_titles, fps=fps)
 
-        out_gif = os.path.join(output_path, f"raw_{filtering_mode}_pc.gif")
+        out_gif = os.path.join(output_path, f"raw_{filtering_mode}.gif")
         if os.path.isfile(out_gif):
             os.remove(out_gif)
         datasets_paths = [reference] + processed_tgt_images
@@ -1261,7 +1373,7 @@ def co_register(
         make_difference_gif(datasets_paths, out_gif, datasets_titles, fps=fps)
 
         if generate_csv:
-            out_ssim = os.path.join(output_path, f"{filtering_mode}_pc.csv")
+            out_ssim = os.path.join(output_path, f"{filtering_mode}.csv")
             out_ssim_df = pd.DataFrame(
                 zip(target_titles, ssims_raw, ssims_aligned, mse_raw, mse_aligned),
                 columns=["Title", "SSIM Raw", "SSIM Aligned", "MSE Raw", "MSE Aligned"],
