@@ -23,6 +23,7 @@ import re
 from sklearn.decomposition import PCA
 from skimage.metrics import structural_similarity as ssim
 from skimage.metrics import mean_squared_error as mse
+from skimage import exposure
 
 
 def get_sentinel_filenames(
@@ -331,7 +332,9 @@ def scale_transform(
 
 
 def readjust_origin_for_new_pixel_size(
-    transform: rasterio.Affine, scale_factor_y: float, scale_factor_x: float
+    transform: rasterio.Affine,
+    scale_factor_y: float,
+    scale_factor_x: float,
 ) -> rasterio.Affine:
     """
     Readjusts the origin of a scene after resampling.
@@ -345,22 +348,30 @@ def readjust_origin_for_new_pixel_size(
 
 def downsample_dataset(
     dataset_path: str,
-    scale_factor: Union[float, list[float]],
+    scale_factor: Union[float, list[float]] = 1.0,
     output_file: str = "",
     enhance_function=None,
+    force_shape: tuple = (),  # (height, width)
 ):
     """
     Downsamples the output data and returns the new downsampled data and its new affine transformation according to `scale_factor`
+    The output shape could also be forced using `forced_shape` parameter.
     """
     with rasterio.open(dataset_path) as dataset:
         # resample data to target shape
         if type(scale_factor) == float:
             scale_factor = [scale_factor] * 2
+        if len(force_shape) != 0:
+            output_shape = force_shape
+        else:
+            output_shape = (
+                int(dataset.height * scale_factor[0]),
+                int(dataset.width * scale_factor[1]),
+            )
         data = dataset.read(
             out_shape=(
                 dataset.count,
-                int(dataset.height * scale_factor[0]),
-                int(dataset.width * scale_factor[1]),
+                *output_shape,
             ),
             resampling=Resampling.bilinear,
         )
@@ -373,6 +384,11 @@ def downsample_dataset(
             (dataset.width / data.shape[-1]), (dataset.height / data.shape[-2])
         )
 
+        if len(force_shape) != 0:
+            scale_factor = [
+                force_shape[0] / scale_factor[0],
+                force_shape[1] / scale_factor[1],
+            ]
         transform = readjust_origin_for_new_pixel_size(transform, *scale_factor)
 
         profile = dataset.profile
@@ -820,7 +836,9 @@ def make_difference_gif(
     else:
         for i, p in enumerate(temp_paths):
             img = rasterio.open(p).read()
-            img = flip_img(img).copy()
+            img = flip_img(img).copy().astype("uint8")
+            if (len(img.shape) == 3) and (img.shape[2] == 1):
+                img = img[:, :, 0]
             cv.putText(
                 img,
                 titles_list[i],
@@ -1162,14 +1180,18 @@ def co_register(
     )
 
     if type(reference) == str:
-        ref_img = cv.cvtColor(
-            flip_img(rasterio.open(reference).read().copy()), cv.COLOR_BGR2GRAY
+        ref_img = flip_img(rasterio.open(reference).read().copy())
+        ref_img = (
+            cv.cvtColor(ref_img, cv.COLOR_BGR2GRAY)
+            if ref_img.shape[2] != 1
+            else ref_img[:, :, 0]
         )
     else:
         if len(reference.shape) == 2:
             ref_img = reference
         else:
             ref_img = cv.cvtColor(reference, cv.COLOR_BGR2GRAY)
+    ref_img = ref_img.astype("uint8")
 
     if (type(targets) == str) or (type(targets) == np.ndarray):
         targets = [targets]
@@ -1179,14 +1201,19 @@ def co_register(
     for tgt in targets:
         if type(tgt) == str:
             img = flip_img(rasterio.open(tgt).read().copy())
-            tgt_imgs.append(cv.cvtColor(img, cv.COLOR_BGR2GRAY))
-            tgt_origs.append(img)
+            img = (
+                cv.cvtColor(img, cv.COLOR_BGR2GRAY)
+                if img.shape[2] != 1
+                else img[:, :, 0]
+            )
+            tgt_imgs.append(img.astype("uint8"))
+            tgt_origs.append(img.astype("uint8"))
         else:
             if len(tgt.shape) == 2:
-                tgt_imgs.append(tgt)
+                tgt_imgs.append(tgt.astype("uint8"))
             else:
-                tgt_imgs.append(cv.cvtColor(tgt, cv.COLOR_BGR2GRAY))
-            tgt_origs.append(tgt)
+                tgt_imgs.append(cv.cvtColor(tgt, cv.COLOR_BGR2GRAY).astype("uint8"))
+            tgt_origs.append(tgt.astype("uint8"))
 
     if generate_gif:
         export_outputs = True
@@ -1334,7 +1361,10 @@ def co_register(
             tgt_aligned_list.append(np.zeros(0))
 
     if generate_gif:
-        out_gif = os.path.join(output_path, f"{filtering_mode}.gif")
+        out_gif = os.path.join(
+            output_path,
+            f"{filtering_mode}{"" if enhanced_shift_method == "" else '_' + enhanced_shift_method}.gif",
+        )
         fids = [
             int(os.path.splitext(os.path.basename(tgt))[0].split("_")[-1])
             for tgt in processed_output_images
@@ -1356,7 +1386,10 @@ def co_register(
         ]
         make_difference_gif(datasets_paths, out_gif, datasets_titles, fps=fps)
 
-        out_gif = os.path.join(output_path, f"raw_{filtering_mode}.gif")
+        out_gif = os.path.join(
+            output_path,
+            f"raw_{filtering_mode}{"" if enhanced_shift_method == "" else '_' + enhanced_shift_method}.gif",
+        )
         if os.path.isfile(out_gif):
             os.remove(out_gif)
         datasets_paths = [reference] + processed_tgt_images
@@ -1373,7 +1406,10 @@ def co_register(
         make_difference_gif(datasets_paths, out_gif, datasets_titles, fps=fps)
 
         if generate_csv:
-            out_ssim = os.path.join(output_path, f"{filtering_mode}.csv")
+            out_ssim = os.path.join(
+                output_path,
+                f"{filtering_mode}{"" if enhanced_shift_method == "" else '_' + enhanced_shift_method}.csv",
+            )
             out_ssim_df = pd.DataFrame(
                 zip(target_titles, ssims_raw, ssims_aligned, mse_raw, mse_aligned),
                 columns=["Title", "SSIM Raw", "SSIM Aligned", "MSE Raw", "MSE Aligned"],
@@ -1384,3 +1420,11 @@ def co_register(
     shutil.rmtree(temp_dir, ignore_errors=True)
 
     return tgt_aligned_list, shifts
+
+
+def apply_gamma(data, gamma=0.5):
+    data = np.power(data, gamma)
+    data = exposure.equalize_hist(data)
+    data *= 255 / data.max()
+    data = data.astype("uint8")
+    return data
