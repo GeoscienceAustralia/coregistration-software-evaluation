@@ -1269,12 +1269,24 @@ def co_register(
                     **params_dict["lk_params"],
                     criteria=criteria,
                 )
-                # ref_good = np.squeeze(p0[st == 1]).astype("int")
-                # tgt_good = np.squeeze(p1[st == 1]).astype("int")
+
                 dist = np.linalg.norm(p1[st == 1] - p0[st == 1], axis=1)
                 of_idx = np.where(np.squeeze(dist) < of_dist_thresh)
                 ref_good = np.squeeze(p0)[of_idx].astype("int")
                 tgt_good = np.squeeze(p1)[of_idx].astype("int")
+
+                points = ref_good.astype("int")
+                invalid_idx_ref = np.where(ref_img[points[:, 1], points[:, 0]] == 0)
+                points = tgt_good.astype("int")
+                invalid_idx_tgt = np.where(tgt_img[points[:, 1], points[:, 0]] == 0)
+                invalid_idx = set(
+                    np.hstack([invalid_idx_ref, invalid_idx_tgt]).ravel().tolist()
+                )
+                valid_idx = np.array(list(set(range(0, len(ref_good))) - invalid_idx))
+
+                ref_good = ref_good[valid_idx]
+                tgt_good = tgt_good[valid_idx]
+
                 valid_idx = np.all(
                     (
                         tgt_good[:, 0] >= 0,
