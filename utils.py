@@ -531,8 +531,8 @@ def adjust_resolutions(
 def find_overlap(
     dataset_1: str,
     dataset_2: str,
-    return_pixels: bool = False,
     return_images: bool = False,
+    return_pixels: bool = False,
     resampling_resolution: str = "lower",
 ):
     """
@@ -544,6 +544,9 @@ def find_overlap(
 
     bounds_1 = raster_1.bounds
     bounds_2 = raster_2.bounds
+
+    if return_images:
+        return_pixels = True
 
     if return_pixels:
         raster_1_px_size = abs(raster_1.profile["transform"].a)
@@ -1169,10 +1172,12 @@ def co_register(
     corr_thresh: float = 0.75,
     enhanced_shift_method: str = "",  # empty, "mean" or "corr"
     remove_outlilers: bool = True,
+    use_overlap: bool = False,
+    rethrow_error: bool = False,
+    resampling_resolution: str = "lower",
 ) -> tuple:
 
     pca = PCA(2)
-    params_dict = of_params
     criteria = (
         cv.TERM_CRITERIA_EPS | cv.TERM_CRITERIA_COUNT,
         number_of_iterations,
@@ -1214,6 +1219,31 @@ def co_register(
             else:
                 tgt_imgs.append(cv.cvtColor(tgt, cv.COLOR_BGR2GRAY).astype("uint8"))
             tgt_origs.append(tgt.astype("uint8"))
+
+    if use_overlap:
+        temp_tgt_imgs = []
+        temp_ref_img = np.zeros(0)
+        temp_dir = "temp/overlap_inputs"
+        os.makedirs(temp_dir, exist_ok=True)
+        ref_temp = os.path.join(temp_dir, "ref_temp.tif")
+        with rasterio.open(ref_temp, "w", **rasterio.open(reference).profile) as ds:
+            ds.write(ref_img, 1)
+        for i, tgt in enumerate(tgt_imgs):
+            tgt_temp = os.path.join(temp_dir, "tgt_temp.tif")
+            with rasterio.open(
+                tgt_temp, "w", **rasterio.open(targets[i]).profile
+            ) as ds:
+                ds.write(tgt, 1)
+            _, (_, _, ref_overlap, tgt_overlap) = find_overlap(
+                ref_temp, tgt_temp, True, resampling_resolution=resampling_resolution
+            )
+            if i == 0:
+                temp_ref_img = ref_overlap
+            temp_tgt_imgs.append(cv.cvtColor(tgt_overlap, cv.COLOR_BGR2GRAY))
+        ref_img = cv.cvtColor(temp_ref_img, cv.COLOR_BGR2GRAY)
+        tgt_imgs = temp_tgt_imgs
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        grey_output: False
 
     if generate_gif:
         export_outputs = True
@@ -1259,14 +1289,14 @@ def co_register(
                     tgt_img_pca = tgt_img.copy()
 
                 p0 = cv.goodFeaturesToTrack(
-                    ref_img_pca, mask=None, **params_dict["feature_params"]
+                    ref_img_pca, mask=None, **of_params["feature_params"]
                 )
                 p1, st, _ = cv.calcOpticalFlowPyrLK(
                     ref_img_pca,
                     tgt_img_pca,
                     p0,
                     None,
-                    **params_dict["lk_params"],
+                    **of_params["lk_params"],
                     criteria=criteria,
                 )
 
@@ -1274,18 +1304,6 @@ def co_register(
                 of_idx = np.where(np.squeeze(dist) < of_dist_thresh)
                 ref_good = np.squeeze(p0)[of_idx].astype("int")
                 tgt_good = np.squeeze(p1)[of_idx].astype("int")
-
-                points = ref_good.astype("int")
-                invalid_idx_ref = np.where(ref_img[points[:, 1], points[:, 0]] == 0)
-                points = tgt_good.astype("int")
-                invalid_idx_tgt = np.where(tgt_img[points[:, 1], points[:, 0]] == 0)
-                invalid_idx = set(
-                    np.hstack([invalid_idx_ref, invalid_idx_tgt]).ravel().tolist()
-                )
-                valid_idx = np.array(list(set(range(0, len(ref_good))) - invalid_idx))
-
-                ref_good = ref_good[valid_idx]
-                tgt_good = tgt_good[valid_idx]
 
                 valid_idx = np.all(
                     (
@@ -1296,6 +1314,19 @@ def co_register(
                     ),
                     axis=0,
                 )
+
+                ref_good = ref_good[valid_idx]
+                tgt_good = tgt_good[valid_idx]
+
+                points = ref_good.astype("int")
+                invalid_idx_ref = np.where(ref_img[points[:, 1], points[:, 0]] == 0)
+                points = tgt_good.astype("int")
+                invalid_idx_tgt = np.where(tgt_img[points[:, 1], points[:, 0]] == 0)
+                invalid_idx = set(
+                    np.hstack([invalid_idx_ref, invalid_idx_tgt]).ravel().tolist()
+                )
+                valid_idx = np.array(list(set(range(0, len(ref_good))) - invalid_idx))
+
                 tgt_good = np.expand_dims(tgt_good[valid_idx], axis=0)
                 ref_good = np.expand_dims(ref_good[valid_idx], axis=0)
                 if (ref_good.shape[1] < 4) or (tgt_good.shape[1] < 4):
@@ -1369,8 +1400,11 @@ def co_register(
                             ds.write(warped[:, :, i], i + 1)
         except Exception as e:
             print(f"Algorithm did not converge for target {i} for the reason below:")
-            print(e)
-            tgt_aligned_list.append(np.zeros(0))
+            if rethrow_error:
+                raise
+            else:
+                print(e)
+                tgt_aligned_list.append(np.zeros(0))
 
     if generate_gif:
         out_gif = os.path.join(
