@@ -23,7 +23,8 @@ import re
 from sklearn.decomposition import PCA
 from skimage.metrics import structural_similarity as ssim
 from skimage.metrics import mean_squared_error as mse
-from skimage import exposure
+from skimage.exposure import equalize_hist, rescale_intensity
+import itertools
 
 
 def get_sentinel_filenames(
@@ -1409,7 +1410,7 @@ def co_register(
     if generate_gif:
         out_gif = os.path.join(
             output_path,
-            f"{filtering_mode}{"" if enhanced_shift_method == "" else '_' + enhanced_shift_method}.gif",
+            f'{filtering_mode}{"" if enhanced_shift_method == "" else "_" + enhanced_shift_method}.gif',
         )
         fids = [
             int(os.path.splitext(os.path.basename(tgt))[0].split("_")[-1])
@@ -1434,7 +1435,7 @@ def co_register(
 
         out_gif = os.path.join(
             output_path,
-            f"raw_{filtering_mode}{"" if enhanced_shift_method == "" else '_' + enhanced_shift_method}.gif",
+            f'raw_{filtering_mode}{"" if enhanced_shift_method == "" else "_" + enhanced_shift_method}.gif',
         )
         if os.path.isfile(out_gif):
             os.remove(out_gif)
@@ -1454,7 +1455,7 @@ def co_register(
         if generate_csv:
             out_ssim = os.path.join(
                 output_path,
-                f"{filtering_mode}{"" if enhanced_shift_method == "" else '_' + enhanced_shift_method}.csv",
+                f'{filtering_mode}{"" if enhanced_shift_method == "" else "_" + enhanced_shift_method}.csv',
             )
             out_ssim_df = pd.DataFrame(
                 zip(target_titles, ssims_raw, ssims_aligned, mse_raw, mse_aligned),
@@ -1468,9 +1469,94 @@ def co_register(
     return tgt_aligned_list, shifts
 
 
-def apply_gamma(data, gamma=0.5):
+def apply_gamma(data, gamma=0.5, rescale: bool = False):
     data = np.power(data, gamma)
-    data = exposure.equalize_hist(data)
-    data *= 255 / data.max()
-    data = data.astype("uint8")
+    data = equalize_hist(data)
+    if rescale:
+        p2, p98 = np.percentile(data, (2, 98))
+        data = rescale_intensity(data, in_range=(p2, p98), out_range="uint8")
+    else:
+        data *= 255 / data.max()
+        data = data.astype("uint8")
     return data
+
+
+def fetch_landsat_stac_server(query):
+    """
+    Queries the stac-server (STAC) backend.
+    This function handles pagination.
+    query is a python dictionary to pass as json to the request.
+    """
+    headers = {
+        "Content-Type": "application/json",
+        "Accept-Encoding": "gzip",
+        "Accept": "application/geo+json",
+    }
+
+    url = f"https://landsatlook.usgs.gov/stac-server/search"
+    data = requests.post(url, headers=headers, json=query).json()
+    error = data.get("message", "")
+    if error:
+        raise Exception(f"STAC-Server failed and returned: {error}")
+
+    context = data.get("context", {})
+    if not context.get("matched"):
+        return []
+    print(context)
+
+    features = data["features"]
+    if data["links"]:
+        query["page"] += 1
+        query["limit"] = context["limit"]
+
+        features = list(itertools.chain(features, fetch_landsat_stac_server(query)))
+
+    return features
+
+
+def find_landsat_scenes_dict(features: dict) -> dict:
+    feat_dict = dict()
+    for feature in features:
+        id = feature["id"]
+
+        scene_id = feature["properties"]["landsat:scene_id"]
+
+        red = feature["assets"]["red"]["href"]
+        green = feature["assets"]["green"]["href"]
+        blue = feature["assets"]["blue"]["href"]
+
+        red_alternate = feature["assets"]["red"]["alternate"]["s3"]["href"]
+        green_alternate = feature["assets"]["green"]["alternate"]["s3"]["href"]
+        blue_alternate = feature["assets"]["blue"]["alternate"]["s3"]["href"]
+
+        feat_dict[id] = dict(
+            scene_id=scene_id,
+            red=(red, red_alternate),
+            green=(green, green_alternate),
+            blue=(blue, blue_alternate),
+        )
+    return feat_dict
+
+
+def get_landsat_search_query(
+    bbox: Union[list, BoundingBox],
+    collections: list[str] = ["landsat-c2l2-sr", "landsat-c2l2-st"],
+    platform: str = "LANDSAT_8",
+    start_date: str = "2014-10-30T00:00:00",
+    end_date: str = "2015-01-23T23:59:59",
+) -> dict:
+    if type(bbox) != list:
+        bbox = [bbox.left, bbox.bottom, bbox.right, bbox.top]
+    query = {
+        "bbox": bbox,
+        "collections": collections,
+        "query": {
+            "eo:cloud_cover": {"lte": 50},
+            "platform": {"in": [platform]},
+            "landsat:collection_category": {"in": ["T1", "T2", "RT"]},
+        },
+        "datetime": f"{start_date}.000Z/{end_date}.999Z",
+        "page": 1,
+        "limit": 100,
+    }
+    return query

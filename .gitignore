@@ -9,3 +9,4 @@ __pycache__/*
 *.xml
 tools/temp/*
 tools/test*
+landsat-env/*
