@@ -1560,3 +1560,32 @@ def get_landsat_search_query(
         "limit": 100,
     }
     return query
+    
+
+def make_landsat_true_color_scene(
+    dataset_paths: list[str], output_path: str
+) -> np.ndarray:
+    red = dataset_paths[0]
+    green = dataset_paths[1]
+    blue = dataset_paths[2]
+    profile = rasterio.open(red).profile
+    profile["count"] = 3
+
+    reds = apply_gamma(rasterio.open(red).read(), rescale=True)[0, :, :]
+    redf = flip_img(reds)
+
+    greens = apply_gamma(rasterio.open(green).read(), rescale=True)[0, :, :]
+    greenf = flip_img(greens)
+
+    blues = apply_gamma(rasterio.open(blue).read(), rescale=True)[0, :, :]
+    bluef = flip_img(blues)
+
+    img = cv.merge([greenf, bluef, redf])
+
+    if output_path != "":
+        with rasterio.open(output_path, "w", **profile) as ds:
+            ds.write(reds, 1)
+            ds.write(blues, 2)
+            ds.write(greens, 3)
+
+    return img
