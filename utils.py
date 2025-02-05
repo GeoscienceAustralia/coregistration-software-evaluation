@@ -24,6 +24,9 @@ from sklearn.decomposition import PCA
 from skimage.metrics import structural_similarity as ssim
 from skimage.metrics import mean_squared_error as mse
 from skimage.exposure import equalize_hist, rescale_intensity
+from lightglue import LightGlue, SuperPoint
+from lightglue.utils import rbd, numpy_image_to_torch
+from torch import Tensor, cuda
 import itertools
 
 
@@ -1136,12 +1139,62 @@ def find_corrs_shifts(
     return shift_x, shift_y
 
 
+def filter_features(
+    ref_points: np.ndarray,
+    tgt_points: np.ndarray,
+    ref_img: np.ndarray,
+    tgt_img: np.ndarray,
+    boumding_shape: tuple,
+    dists: np.ndarray,
+    dist_thresh: Union[None, int, float] = None,
+) -> tuple:
+
+    if dist_thresh != None:
+        filter_idx = np.where(np.squeeze(dists) < dist_thresh)
+        ref_good = np.squeeze(ref_points)[filter_idx].astype("int")
+        tgt_good = np.squeeze(tgt_points)[filter_idx].astype("int")
+
+        valid_idx = np.all(
+            (
+                tgt_good[:, 0] >= 0,
+                tgt_good[:, 1] >= 0,
+                tgt_good[:, 0] < boumding_shape[1],
+                tgt_good[:, 1] < boumding_shape[0],
+            ),
+            axis=0,
+        )
+
+        ref_good = ref_good[valid_idx]
+        tgt_good = tgt_good[valid_idx]
+
+        points = ref_good.astype("int")
+        invalid_idx_ref = np.where(ref_img[points[:, 1], points[:, 0]] == 0)
+        points = tgt_good.astype("int")
+        invalid_idx_tgt = np.where(tgt_img[points[:, 1], points[:, 0]] == 0)
+        invalid_idx = set(
+            np.hstack([invalid_idx_ref, invalid_idx_tgt]).ravel().tolist()
+        )
+        valid_idx = np.array(list(set(range(0, len(ref_good))) - invalid_idx))
+
+        tgt_good = np.expand_dims(tgt_good[valid_idx], axis=0)
+        ref_good = np.expand_dims(ref_good[valid_idx], axis=0)
+    else:
+        tgt_good = np.expand_dims(tgt_points, axis=0)
+        ref_good = np.expand_dims(ref_points, axis=0)
+
+    if (ref_good.shape[1] < 4) or (tgt_good.shape[1] < 4):
+        print(
+            f"WARNING: couldn't find enough good features for target or reference. num ref features: {ref_good.shape[0]}, num tgt features = {tgt_good.shape[0]}"
+        )
+    return ref_good, tgt_good
+
+
 def co_register(
     reference: Union[str, np.ndarray],
     targets=Union[
         str, np.ndarray, list[str], list[np.ndarray], list[Union[str, np.ndarray]]
     ],
-    filtering_mode: str = "of",  # "of", "pca" or "pca_of"
+    filtering_mode: str = "of",  # "lg", "of", "pca" or "pca_of"
     number_of_iterations=10,
     termination_eps=1e-5,
     of_params: dict = dict(
@@ -1163,7 +1216,7 @@ def co_register(
     generate_gif: bool = True,
     generate_csv: bool = True,
     fps: int = 3,
-    of_dist_thresh: int = 5,  # pixels
+    of_dist_thresh: Union[None, int, float] = 5,  # pixels
     pca_dist_thresh: int = 25,  # pixels
     filter_by_ground_res: bool = False,
     ground_resolution: float = 10.0,  # meters
@@ -1176,6 +1229,7 @@ def co_register(
     use_overlap: bool = False,
     rethrow_error: bool = False,
     resampling_resolution: str = "lower",
+    ligh_glue_max_points: int = 200,
 ) -> tuple:
 
     pca = PCA(2)
@@ -1289,51 +1343,29 @@ def co_register(
                     ref_img_pca = ref_img.copy()
                     tgt_img_pca = tgt_img.copy()
 
-                p0 = cv.goodFeaturesToTrack(
-                    ref_img_pca, mask=None, **of_params["feature_params"]
-                )
-                p1, st, _ = cv.calcOpticalFlowPyrLK(
-                    ref_img_pca,
-                    tgt_img_pca,
-                    p0,
-                    None,
-                    **of_params["lk_params"],
-                    criteria=criteria,
-                )
-
-                dist = np.linalg.norm(p1[st == 1] - p0[st == 1], axis=1)
-                of_idx = np.where(np.squeeze(dist) < of_dist_thresh)
-                ref_good = np.squeeze(p0)[of_idx].astype("int")
-                tgt_good = np.squeeze(p1)[of_idx].astype("int")
-
-                valid_idx = np.all(
-                    (
-                        tgt_good[:, 0] >= 0,
-                        tgt_good[:, 1] >= 0,
-                        tgt_good[:, 0] < tgt_img_pca.shape[1],
-                        tgt_good[:, 1] < tgt_img_pca.shape[0],
-                    ),
-                    axis=0,
-                )
-
-                ref_good = ref_good[valid_idx]
-                tgt_good = tgt_good[valid_idx]
-
-                points = ref_good.astype("int")
-                invalid_idx_ref = np.where(ref_img[points[:, 1], points[:, 0]] == 0)
-                points = tgt_good.astype("int")
-                invalid_idx_tgt = np.where(tgt_img[points[:, 1], points[:, 0]] == 0)
-                invalid_idx = set(
-                    np.hstack([invalid_idx_ref, invalid_idx_tgt]).ravel().tolist()
-                )
-                valid_idx = np.array(list(set(range(0, len(ref_good))) - invalid_idx))
-
-                tgt_good = np.expand_dims(tgt_good[valid_idx], axis=0)
-                ref_good = np.expand_dims(ref_good[valid_idx], axis=0)
-                if (ref_good.shape[1] < 4) or (tgt_good.shape[1] < 4):
-                    print(
-                        f"WARNING: couldn't find enough good features for target or reference. num ref features: {ref_good.shape[0]}, num tgt features = {tgt_good.shape[0]}"
+                if (filtering_mode == "of") or (filtering_mode == "pca_of"):
+                    p0 = cv.goodFeaturesToTrack(
+                        ref_img_pca, mask=None, **of_params["feature_params"]
                     )
+                    p1, st, _ = cv.calcOpticalFlowPyrLK(
+                        ref_img_pca,
+                        tgt_img_pca,
+                        p0,
+                        None,
+                        **of_params["lk_params"],
+                        criteria=criteria,
+                    )
+
+                    dist = np.linalg.norm(p1[st == 1] - p0[st == 1], axis=1)
+                else:
+                    p0, p1 = extract_light_glue_features(
+                        ref_img, tgt_img, ligh_glue_max_points
+                    )
+                    dist = np.linalg.norm(p1 - p0, axis=1)
+
+                ref_good, tgt_good = filter_features(
+                    p0, p1, ref_img, tgt_img, tgt_img_pca.shape, dist, of_dist_thresh
+                )
                 h, inliers = cv.estimateAffine2D(tgt_good, ref_good)
 
                 if enhanced_shift_method == "":
@@ -1560,7 +1592,7 @@ def get_landsat_search_query(
         "limit": 100,
     }
     return query
-    
+
 
 def make_landsat_true_color_scene(
     dataset_paths: list[str], output_path: str
@@ -1589,3 +1621,59 @@ def make_landsat_true_color_scene(
             ds.write(greens, 3)
 
     return img
+
+
+def load_array_image(
+    image: np.ndarray,
+    grayscale: bool = True,
+    use_cuda: bool = False,
+) -> Tensor:
+    if not grayscale:
+        image = image[..., ::-1]
+    image = numpy_image_to_torch(image)
+    if use_cuda:
+        image.cuda()
+    return image
+
+
+def extract_light_glue_features(
+    ref_img: np.ndarray,
+    tgt_img: np.ndarray,
+    max_num_points: int = 1000,
+    grayscale: bool = True,
+) -> tuple:
+
+    use_cuda = False
+    if cuda.is_available():
+        use_cuda = True
+
+    extractor = SuperPoint(
+        max_num_keypoints=max_num_points
+    ).eval()  # load the extractor
+    matcher = LightGlue(features="superpoint").eval()  # load the matcher
+
+    if use_cuda:
+        extractor = extractor.cuda()
+        matcher = matcher.cuda()
+
+    image0 = load_array_image(ref_img, grayscale, use_cuda)
+    image1 = load_array_image(tgt_img, grayscale, use_cuda)
+
+    feats0 = extractor.extract(
+        image0
+    )  # auto-resize the image, disable with resize=None
+    feats1 = extractor.extract(image1)
+    matches01 = matcher({"image0": feats0, "image1": feats1})
+    feats0, feats1, matches01 = [
+        rbd(x) for x in [feats0, feats1, matches01]
+    ]  # remove batch dimension
+    matches = matches01["matches"]  # indices with shape (K,2)
+    points0 = feats0["keypoints"][
+        matches[..., 0]
+    ]  # coordinates in image #0, shape (K,2)
+    points1 = feats1["keypoints"][
+        matches[..., 1]
+    ]  # coordinates in image #1, shape (K,2)
+    features = points0.numpy().astype("int")
+    moved_features = points1.numpy().astype("int")
+    return features, moved_features
