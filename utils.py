@@ -1677,3 +1677,34 @@ def extract_light_glue_features(
     features = points0.numpy().astype("int")
     moved_features = points1.numpy().astype("int")
     return features, moved_features
+
+
+def tracking_image(
+    ref_points: np.ndarray,
+    tgt_points: np.ndarray,
+    ref_img: np.ndarray,
+    tgt_img: np.ndarray,
+    line_width: int = 100,
+    dot_radius: int = 100,
+) -> tuple:
+    color = np.random.randint(0, 255, (ref_points.shape[1], 3))
+
+    ref_copy = ref_img.copy()
+    for i, f in enumerate(np.squeeze(ref_points)):
+        centre = (int(f[0]), int(f[1]))
+        ref_copy = cv.circle(ref_copy, centre, dot_radius, color[i].tolist(), -1)
+
+    tgt_copy = tgt_img.copy()
+    for i, f in enumerate(np.squeeze(tgt_points)):
+        centre = (int(f[0]), int(f[1]))
+        tgt_copy = cv.circle(tgt_copy, centre, dot_radius, color[i].tolist(), -1)
+
+    # draw the tracks
+    mask = np.zeros_like(ref_img.copy())
+    frame = tgt_img.copy()
+    for i, (new, old) in enumerate(zip(np.squeeze(tgt_points), np.squeeze(ref_points))):
+        a, b = new.ravel()
+        c, d = old.ravel()
+        mask = cv.arrowedLine(mask, (a, b), (c, d), color[i].tolist(), line_width)
+    track_img = cv.add(frame, mask)
+    return track_img, ref_copy, tgt_copy
