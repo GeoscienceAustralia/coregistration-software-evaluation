@@ -1134,6 +1134,12 @@ def find_corrs_shifts(
         corrs.append(cv.phaseCorrelate(np.float32(tgt), np.float32(ref), None))
     corrs = [c[0] for c in corrs if c[1] > corr_thresh]
 
+    if len(corrs) == 0:
+        print(
+            "WARNING: No points were found with the given correlation threshold, returning zero shifts..."
+        )
+        return (0.0, 0.0)
+
     shift_x = np.mean([c[0] for c in corrs])
     shift_y = np.mean([c[1] for c in corrs])
     return shift_x, shift_y
@@ -1144,22 +1150,22 @@ def filter_features(
     tgt_points: np.ndarray,
     ref_img: np.ndarray,
     tgt_img: np.ndarray,
-    boumding_shape: tuple,
+    bounding_shape: tuple,
     dists: np.ndarray,
     dist_thresh: Union[None, int, float] = None,
 ) -> tuple:
 
     if dist_thresh != None:
         filter_idx = np.where(np.squeeze(dists) < dist_thresh)
-        ref_good = np.squeeze(ref_points)[filter_idx].astype("int")
-        tgt_good = np.squeeze(tgt_points)[filter_idx].astype("int")
+        ref_good = np.squeeze(ref_points)[filter_idx]
+        tgt_good = np.squeeze(tgt_points)[filter_idx]
 
         valid_idx = np.all(
             (
                 tgt_good[:, 0] >= 0,
                 tgt_good[:, 1] >= 0,
-                tgt_good[:, 0] < boumding_shape[1],
-                tgt_good[:, 1] < boumding_shape[0],
+                tgt_good[:, 0] < bounding_shape[1],
+                tgt_good[:, 1] < bounding_shape[0],
             ),
             axis=0,
         )
@@ -1687,6 +1693,10 @@ def tracking_image(
     line_width: int = 100,
     dot_radius: int = 100,
 ) -> tuple:
+
+    ref_points = ref_points.astype("int")
+    tgt_points = tgt_points.astype("int")
+
     color = np.random.randint(0, 255, (ref_points.shape[1], 3))
 
     ref_copy = ref_img.copy()
