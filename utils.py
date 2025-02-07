@@ -1561,13 +1561,25 @@ def find_landsat_scenes_dict(features: dict) -> dict:
 
         scene_id = feature["properties"]["landsat:scene_id"]
 
-        red = feature["assets"]["red"]["href"]
-        green = feature["assets"]["green"]["href"]
-        blue = feature["assets"]["blue"]["href"]
+        assets = feature["assets"]
 
-        red_alternate = feature["assets"]["red"]["alternate"]["s3"]["href"]
-        green_alternate = feature["assets"]["green"]["alternate"]["s3"]["href"]
-        blue_alternate = feature["assets"]["blue"]["alternate"]["s3"]["href"]
+        red = ""
+        red_alternate = ""
+        if "red" in assets:
+            red = assets["red"]["href"]
+            red_alternate = assets["red"]["alternate"]["s3"]["href"]
+
+        green = ""
+        green_alternate = ""
+        if "green" in assets:
+            green = assets["green"]["href"]
+            green_alternate = assets["green"]["alternate"]["s3"]["href"]
+
+        blue = ""
+        blue_alternate = ""
+        if "blue" in assets:
+            blue = assets["blue"]["href"]
+            blue_alternate = assets["blue"]["alternate"]["s3"]["href"]
 
         feat_dict[id] = dict(
             scene_id=scene_id,
