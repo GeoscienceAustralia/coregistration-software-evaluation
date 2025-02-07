@@ -8,6 +8,5 @@ hyp3_sdk
 scikit-learn
 scikit-image
 requests
-landsatxplore
 black
-black["jupyter"]
+pykml

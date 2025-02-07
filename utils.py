@@ -28,6 +28,8 @@ from lightglue import LightGlue, SuperPoint
 from lightglue.utils import rbd, numpy_image_to_torch
 from torch import Tensor, cuda
 import itertools
+from pykml import parser
+from collections import namedtuple
 
 
 def get_sentinel_filenames(
@@ -1718,3 +1720,46 @@ def tracking_image(
         mask = cv.arrowedLine(mask, (a, b), (c, d), color[i].tolist(), line_width)
     track_img = cv.add(frame, mask)
     return track_img, ref_copy, tgt_copy
+
+
+PointXYZ = namedtuple("PointXYZ", ["x", "y", "z"])
+PointLLA = namedtuple("PointLLA", ["lat", "lon", "alt"])
+
+
+def read_kml_polygon(
+    kml_path: str, is_lat_lon: bool = True, is_kml_str: bool = False
+) -> tuple:
+
+    if is_kml_str:
+        os.makedirs("temp_kml_dir", exist_ok=True)
+        with open("temp_kml_dir/temp_kml.kml", "w") as f:
+            f.write(kml_path)
+        kml_path = "temp_kml_dir/temp_kml.kml"
+    with open(kml_path) as f:
+        doc = parser.parse(f).getroot().Document.Placemark
+    shutil.rmtree("temp_kml_dir", ignore_errors=True)
+
+    coords = []
+    for pm in doc:
+        coord = pm.Polygon.outerBoundaryIs.LinearRing.coordinates.text.strip()
+        coord_list = coord.split(" ")
+        for c in coord_list:
+            c_splits = c.split(",")
+            c_nums = [float(i) for i in c_splits]
+            if len(c_nums) == 2:
+                c_nums.append(0.0)
+            if is_lat_lon:
+                coords.append(PointLLA(c_nums[0], c_nums[1], c_nums[2]))
+            else:
+                coords.append(PointXYZ(c_nums[0], c_nums[1], c_nums[2]))
+
+    if is_lat_lon:
+        lats = [p.lat for p in coords]
+        lons = [p.lon for p in coords]
+        bbox = BoundingBox(min(lats), min(lons), max(lats), max(lons))
+    else:
+        xs = [p.x for p in coords]
+        ys = [p.y for p in coords]
+        bbox = BoundingBox(min(xs), min(ys), max(xs), max(ys))
+
+    return coords, bbox
