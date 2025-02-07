@@ -1235,7 +1235,7 @@ def co_register(
     use_overlap: bool = False,
     rethrow_error: bool = False,
     resampling_resolution: str = "lower",
-    ligh_glue_max_points: int = 200,
+    ligh_glue_max_points: int = 1000,
 ) -> tuple:
 
     pca = PCA(2)
