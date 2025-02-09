@@ -1509,10 +1509,11 @@ def co_register(
     return tgt_aligned_list, shifts
 
 
-def apply_gamma(data, gamma=0.5, rescale: bool = False):
+def apply_gamma(data, gamma=0.5, stretch_hist: bool = False, adjust_hist: bool = False):
     data = np.power(data, gamma)
-    data = equalize_hist(data)
-    if rescale:
+    if adjust_hist:
+        data = equalize_hist(data)
+    if stretch_hist:
         p2, p98 = np.percentile(data, (2, 98))
         data = rescale_intensity(data, in_range=(p2, p98), out_range="uint8")
     else:
@@ -1622,23 +1623,24 @@ def make_landsat_true_color_scene(
     blue = dataset_paths[2]
     profile = rasterio.open(red).profile
     profile["count"] = 3
+    profile["dtype"] = "uint8"
 
-    reds = apply_gamma(rasterio.open(red).read(), rescale=True)[0, :, :]
+    reds = apply_gamma(rasterio.open(red).read(), 1.0, True)[0, :, :]
     redf = flip_img(reds)
 
-    greens = apply_gamma(rasterio.open(green).read(), rescale=True)[0, :, :]
+    greens = apply_gamma(rasterio.open(green).read(), 1.0, True)[0, :, :]
     greenf = flip_img(greens)
 
-    blues = apply_gamma(rasterio.open(blue).read(), rescale=True)[0, :, :]
+    blues = apply_gamma(rasterio.open(blue).read(), 1.0, True)[0, :, :]
     bluef = flip_img(blues)
 
-    img = cv.merge([greenf, bluef, redf])
+    img = cv.merge([redf, greenf, bluef])
 
     if output_path != "":
         with rasterio.open(output_path, "w", **profile) as ds:
             ds.write(reds, 1)
-            ds.write(blues, 2)
-            ds.write(greens, 3)
+            ds.write(greens, 2)
+            ds.write(blues, 3)
 
     return img
 
