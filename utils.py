@@ -1239,6 +1239,7 @@ def co_register(
     resampling_resolution: str = "lower",
     ligh_glue_max_points: int = 1000,
     return_shifted_iamges: bool = False,
+    laplacian_kernel_size: Union[None, int] = None,
 ) -> tuple:
 
     pca = PCA(2)
@@ -1261,6 +1262,8 @@ def co_register(
         else:
             ref_img = cv.cvtColor(reference, cv.COLOR_BGR2GRAY)
     ref_img = ref_img.astype("uint8")
+    if laplacian_kernel_size is not None:
+        ref_img = cv.Laplacian(ref_img, cv.CV_8U, ksize=laplacian_kernel_size)
 
     if (type(targets) == str) or (type(targets) == np.ndarray):
         targets = [targets]
@@ -1283,6 +1286,15 @@ def co_register(
             else:
                 tgt_imgs.append(cv.cvtColor(tgt, cv.COLOR_BGR2GRAY).astype("uint8"))
             tgt_origs.append(tgt.astype("uint8"))
+
+    tgt_imgs_temp = []
+    if laplacian_kernel_size is not None:
+        for tgt_img in tgt_imgs:
+            tgt_imgs_temp.append(
+                cv.Laplacian(tgt_img, cv.CV_8U, ksize=laplacian_kernel_size)
+            )
+    tgt_imgs = tgt_imgs_temp
+    tgt_imgs_temp = None
 
     if use_overlap:
         temp_tgt_imgs = []
