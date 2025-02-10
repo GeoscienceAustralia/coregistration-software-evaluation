@@ -1294,9 +1294,9 @@ def co_register(
             tgt_imgs_temp.append(
                 cv.Laplacian(tgt_img, cv.CV_8U, ksize=laplacian_kernel_size)
             )
-    grey_tgts = tgt_imgs
-    tgt_imgs = tgt_imgs_temp
-    tgt_imgs_temp = None
+        grey_tgts = tgt_imgs
+        tgt_imgs = tgt_imgs_temp
+        tgt_imgs_temp = None
 
     if use_overlap:
         temp_tgt_imgs = []
@@ -1509,11 +1509,24 @@ def co_register(
             os.remove(out_gif)
         datasets_paths = [reference] + processed_tgt_images
         ssims_raw = [
-            np.round(ssim(ref_img, tgt_imgs[id], win_size=3), 3)
+            np.round(
+                ssim(
+                    ref_img,
+                    tgt_imgs[id] if laplacian_kernel_size is None else grey_tgts[id],
+                    win_size=3,
+                ),
+                3,
+            )
             for id in range(len(tgt_aligned_list))
         ]
         mse_raw = [
-            np.round(mse(ref_img, tgt_imgs[id]), 3)
+            np.round(
+                mse(
+                    ref_img,
+                    tgt_imgs[id] if laplacian_kernel_size is None else grey_tgts[id],
+                ),
+                3,
+            )
             for id in range(len(tgt_aligned_list))
         ]
         datasets_titles = ["Reference"] + [
