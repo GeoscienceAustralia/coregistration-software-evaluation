@@ -1263,6 +1263,7 @@ def co_register(
             ref_img = cv.cvtColor(reference, cv.COLOR_BGR2GRAY)
     ref_img = ref_img.astype("uint8")
     if laplacian_kernel_size is not None:
+        grey_ref = ref_img.copy()
         ref_img = cv.Laplacian(ref_img, cv.CV_8U, ksize=laplacian_kernel_size)
 
     if (type(targets) == str) or (type(targets) == np.ndarray):
@@ -1293,6 +1294,7 @@ def co_register(
             tgt_imgs_temp.append(
                 cv.Laplacian(tgt_img, cv.CV_8U, ksize=laplacian_kernel_size)
             )
+    grey_tgts = tgt_imgs
     tgt_imgs = tgt_imgs_temp
     tgt_imgs_temp = None
 
@@ -1435,7 +1437,9 @@ def co_register(
                 continue
 
             tgt_aligned = warp_affine_dataset(
-                tgt_img, translation_x=shift_x, translation_y=shift_y
+                tgt_img if laplacian_kernel_size is None else grey_tgts[i],
+                translation_x=shift_x,
+                translation_y=shift_y,
             )
             tgt_aligned_list.append(tgt_aligned)
 
@@ -1470,6 +1474,8 @@ def co_register(
                 tgt_aligned_list.append(np.zeros(0))
 
     if generate_gif:
+        if laplacian_kernel_size is not None:
+            ref_img = grey_ref
         out_gif = os.path.join(
             output_path,
             f'{filtering_mode}{"" if enhanced_shift_method == "" else "_" + enhanced_shift_method}.gif',
