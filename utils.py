@@ -1269,13 +1269,13 @@ def co_register(
     for tgt in targets:
         if type(tgt) == str:
             img = flip_img(rasterio.open(tgt).read().copy())
+            tgt_origs.append(img.astype("uint8"))
             img = (
                 cv.cvtColor(img, cv.COLOR_BGR2GRAY)
                 if img.shape[2] != 1
                 else img[:, :, 0]
             )
             tgt_imgs.append(img.astype("uint8"))
-            tgt_origs.append(img.astype("uint8"))
         else:
             if len(tgt.shape) == 2:
                 tgt_imgs.append(tgt.astype("uint8"))
@@ -1434,11 +1434,11 @@ def co_register(
                         tgt_origs[i], translation_x=shift_x, translation_y=shift_y
                     )
                 with rasterio.open(temp_path, "w", **profile) as ds:
-                    for i in range(0, profile["count"]):
+                    for j in range(0, profile["count"]):
                         if grey_output:
-                            ds.write(warped, i + 1)
+                            ds.write(warped, j + 1)
                         else:
-                            ds.write(warped[:, :, i], i + 1)
+                            ds.write(warped[:, :, j], j + 1)
         except Exception as e:
             print(f"Algorithm did not converge for target {i} for the reason below:")
             if rethrow_error:
@@ -1452,19 +1452,19 @@ def co_register(
             output_path,
             f'{filtering_mode}{"" if enhanced_shift_method == "" else "_" + enhanced_shift_method}.gif',
         )
-        fids = [
-            int(os.path.splitext(os.path.basename(tgt))[0].split("_")[-1])
-            for tgt in processed_output_images
-        ]
-        target_titles = [f"target_{id}" for id in fids]
+        target_titles = [f"target_{id}" for id in range(len(tgt_aligned_list))]
 
         if os.path.isfile(out_gif):
             os.remove(out_gif)
         datasets_paths = [reference] + processed_output_images
         ssims_aligned = [
-            np.round(ssim(ref_img, tgt_aligned_list[id], win_size=3), 3) for id in fids
+            np.round(ssim(ref_img, tgt_aligned_list[id], win_size=3), 3)
+            for id in range(len(tgt_aligned_list))
         ]
-        mse_aligned = [np.round(mse(ref_img, tgt_aligned_list[id]), 3) for id in fids]
+        mse_aligned = [
+            np.round(mse(ref_img, tgt_aligned_list[id]), 3)
+            for id in range(len(tgt_aligned_list))
+        ]
         datasets_titles = ["Reference"] + [
             f"{target_title}, ssim:{ssim_score}, mse:{mse_score}"
             for target_title, ssim_score, mse_score in zip(
@@ -1481,9 +1481,13 @@ def co_register(
             os.remove(out_gif)
         datasets_paths = [reference] + processed_tgt_images
         ssims_raw = [
-            np.round(ssim(ref_img, tgt_imgs[id], win_size=3), 3) for id in fids
+            np.round(ssim(ref_img, tgt_imgs[id], win_size=3), 3)
+            for id in range(len(tgt_aligned_list))
         ]
-        mse_raw = [np.round(mse(ref_img, tgt_imgs[id]), 3) for id in fids]
+        mse_raw = [
+            np.round(mse(ref_img, tgt_imgs[id]), 3)
+            for id in range(len(tgt_aligned_list))
+        ]
         datasets_titles = ["Reference"] + [
             f"{target_title}, ssim:{ssim_score}, mse:{mse_score}"
             for target_title, ssim_score, mse_score in zip(
