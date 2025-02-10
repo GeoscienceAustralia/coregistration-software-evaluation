@@ -1238,6 +1238,7 @@ def co_register(
     rethrow_error: bool = False,
     resampling_resolution: str = "lower",
     ligh_glue_max_points: int = 1000,
+    return_shifted_iamges: bool = False,
 ) -> tuple:
 
     pca = PCA(2)
@@ -1328,6 +1329,9 @@ def co_register(
 
     temp_dir = "temp/outputs"
     os.makedirs(temp_dir, exist_ok=True)
+    if return_shifted_iamges:
+        aligned_output_dir = os.path.join(output_path, "Aligned")
+        os.makedirs(aligned_output_dir, exist_ok=True)
     for i, tgt_img in enumerate(tgt_imgs):
         try:
             if filtering_mode == "pca":
@@ -1340,6 +1344,7 @@ def co_register(
                 ((shift_x, shift_y), _) = cv.phaseCorrelate(
                     np.float32(tgt_good), np.float32(ref_good), None
                 )
+                enhanced_shift_method = ""
             else:
                 if filtering_mode == "pca_of":
                     pca_diff = pca.fit_transform(ref_img - tgt_img)
@@ -1423,7 +1428,12 @@ def co_register(
             tgt_aligned_list.append(tgt_aligned)
 
             if export_outputs:
-                temp_path = os.path.join(temp_dir, f"out_{i}.tiff")
+                if not return_shifted_iamges:
+                    temp_path = os.path.join(temp_dir, f"out_{i}.tiff")
+                else:
+                    temp_path = os.path.join(
+                        aligned_output_dir, os.path.basename(targets[i])
+                    )
                 processed_output_images.append(temp_path)
                 processed_tgt_images.append(targets[i])
                 profile = rasterio.open(targets[i]).profile
