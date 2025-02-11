@@ -327,11 +327,16 @@ def get_scenes_dict(
 
 
 def scale_transform(
-    warp_matrix: np.ndarray, resolution_ratio_y: float, resolution_ratio_x: float
+    warp_matrix: np.ndarray,
+    resolution_ratio_y: float,
+    resolution_ratio_x: float,
+    adjust_to_centre: bool = False,
 ) -> np.ndarray:
     scaled_warp = warp_matrix.copy()
     scaled_warp[:, 0] /= resolution_ratio_x
     scaled_warp[:, 1] /= resolution_ratio_y
+    if not adjust_to_centre:
+        return scaled_warp
     scaled_warp[0, 2] += (1 - resolution_ratio_x) * abs(scaled_warp[0, 0]) / 2
     scaled_warp[1, 2] -= (1 - resolution_ratio_y) * abs(scaled_warp[1, 1]) / 2
     return scaled_warp
@@ -341,10 +346,13 @@ def readjust_origin_for_new_pixel_size(
     transform: rasterio.Affine,
     scale_factor_y: float,
     scale_factor_x: float,
+    adjust_to_centre: bool = False,
 ) -> rasterio.Affine:
     """
     Readjusts the origin of a scene after resampling.
     """
+    if not adjust_to_centre:
+        return transform
     new_orig_x = transform.c + ((1 - scale_factor_x) * abs(transform.a) / 2)
     new_orig_y = transform.f - ((1 - scale_factor_y) * abs(transform.e) / 2)
     return rasterio.Affine(
@@ -395,7 +403,7 @@ def downsample_dataset(
                 force_shape[0] / scale_factor[0],
                 force_shape[1] / scale_factor[1],
             ]
-        transform = readjust_origin_for_new_pixel_size(transform, *scale_factor)
+        # transform = readjust_origin_for_new_pixel_size(transform, *scale_factor)
 
         profile = dataset.profile
         profile.update(
