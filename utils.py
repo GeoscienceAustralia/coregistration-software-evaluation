@@ -800,7 +800,7 @@ def make_difference_gif(
     mosaic_offsets_x: list[int] = [],
     mosaic_offsets_y: list[int] = [],
     fps: int = 1,
-    align_origins: bool = False,
+    use_overlap: bool = False,
 ):
     os.makedirs("temp", exist_ok=True)
     temp_paths = [os.path.join("temp", os.path.basename(f)) for f in images_list]
@@ -864,22 +864,10 @@ def make_difference_gif(
                 img = img[:, :, 0]
             temp_images.append(img)
 
-        if align_origins:
-            aligned_temp_images = [temp_images[0]]
-            ref_x = abs(transforms[0].c / transforms[0].a)
-            ref_y = abs(transforms[0].f / transforms[0].e)
-            for i, img in enumerate(temp_images[1:]):
-                tgt_x = abs(transforms[i + 1].c / transforms[i + 1].a)
-                tgt_y = abs(transforms[i + 1].f / transforms[i + 1].e)
-                shift_x = ref_x - tgt_x
-                shift_y = ref_y - tgt_y
-                aligned_temp_images.append(
-                    warp_affine_dataset(
-                        img, translation_x=shift_x, translation_y=shift_y
-                    )
-                )
-            temp_images = aligned_temp_images.copy()
-            aligned_temp_images = None
+        if use_overlap:
+            temp_images = [temp_images[0]] + shift_targets_to_origin(
+                temp_images[1:], transforms[0], transforms[1:]
+            )
         for img in temp_images:
             cv.putText(
                 img,
@@ -895,6 +883,27 @@ def make_difference_gif(
 
     imageio.mimwrite(output_path, images, loop=0, fps=fps)
     shutil.rmtree("temp", ignore_errors=True)
+
+
+def shift_targets_to_origin(
+    tgt_imgs: list[np.ndarray],
+    ref_transform: rasterio.Affine,
+    tgt_transforms: list[rasterio.Affine],
+) -> list[np.ndarray]:
+    ref_x = abs(ref_transform.c / ref_transform.a)
+    ref_y = abs(ref_transform.f / ref_transform.e)
+    shifted_tgts = []
+    for i, img in enumerate(tgt_imgs):
+        tgt_x = abs(tgt_transforms[i].c / tgt_transforms[i].a)
+        tgt_y = abs(tgt_transforms[i].f / tgt_transforms[i].e)
+        shift_x = tgt_x - ref_x
+        shift_y = ref_y - tgt_y
+        shifted_tgts.append(
+            warp_affine_dataset(
+                img, translation_x=shift_x, translation_y=shift_y
+            ).astype("uint8")
+        )
+    return shifted_tgts
 
 
 def find_band_files_s2(dir: str, selected_res_index: int = -1) -> list[str]:
@@ -1288,7 +1297,6 @@ def co_register(
     laplacian_kernel_size: Union[None, int] = None,
     lower_of_dist_thresh: Union[None, int, float] = None,
     origin_dist_threshold: int = 1,  # pixels,
-    align_origins: bool = False,
 ) -> tuple:
 
     pca = PCA(2)
@@ -1300,11 +1308,6 @@ def co_register(
 
     if (type(targets) == str) or (type(targets) == np.ndarray):
         targets = [targets]
-
-    if align_origins:
-        use_overlap = False
-    if use_overlap:
-        align_origins = False
 
     ref_raster = rasterio.open(reference)
     tgt_profiles = []
@@ -1341,9 +1344,9 @@ def co_register(
                 or (not np.all(orig_y_diff < origin_dist_threshold))
                 or (not np.all(w_diff == 0))
                 or (not np.all(h_diff == 0))
-            ) and ((not use_overlap) and (not align_origins)):
+            ) and (not use_overlap):
                 warnings.warn(
-                    "Origins or shapes of the reference or target images do not match. Consider using the `use_overlap` or `align_origins` flag."
+                    "Origins or shapes of the reference or target images do not match. Consider using the `use_overlap` flag."
                 )
 
     if use_overlap:
@@ -1358,9 +1361,7 @@ def co_register(
             )
             ref_imgs.append(cv.cvtColor(ref_overlap, cv.COLOR_BGR2GRAY).astype("uint8"))
             tgt_imgs.append(cv.cvtColor(tgt_overlap, cv.COLOR_BGR2GRAY).astype("uint8"))
-            tgt_origs.append(tgt_overlap.astype("uint8"))
             grey_output = False
-            warnings.warn("Cannot generate Gif output in `use_overlap` mode.")
     else:
         if type(reference) == str:
             ref_img = flip_img(ref_raster.read().copy())
@@ -1438,7 +1439,6 @@ def co_register(
     processed_tgt_images = []
     processed_output_images = []
     shifts = []
-    orig_aligned_shifts = []
 
     temp_dir = "temp/outputs"
     os.makedirs(temp_dir, exist_ok=True)
@@ -1530,9 +1530,6 @@ def co_register(
                         )
 
             shifts.append((shift_x, shift_y))
-            shift_x_aligned_orig = shift_x - (ref_orig_x - tgt_orig_xs[i])
-            shift_y_aligned_orig = shift_y - (ref_orig_y - tgt_orig_ys[i])
-            orig_aligned_shifts.append((shift_x_aligned_orig, shift_y_aligned_orig))
 
             if shift_x == np.inf:
                 print(f"No valid shifts found.")
@@ -1562,14 +1559,10 @@ def co_register(
                     updated_profile["transform"] = rasterio.Affine(
                         profile["transform"].a,
                         profile["transform"].b,
-                        profile["transform"].c
-                        + (shift_x_aligned_orig if align_origins else shift_x)
-                        * profile["transform"].a,
+                        profile["transform"].c + shift_x * profile["transform"].a,
                         profile["transform"].d,
                         profile["transform"].e,
-                        profile["transform"].f
-                        + (shift_y_aligned_orig if align_origins else shift_y)
-                        * profile["transform"].e,
+                        profile["transform"].f + shift_y * profile["transform"].e,
                     )
                     with rasterio.open(
                         os.path.join(aligned_output_dir, os.path.basename(targets[i])),
@@ -1580,19 +1573,20 @@ def co_register(
                             ds.write(tgt_raws[i][:, :, j], j + 1)
                 processed_output_images.append(temp_path)
                 processed_tgt_images.append(targets[i])
-                if not use_overlap:
-                    if grey_output:
-                        warped = tgt_aligned
-                    else:
-                        warped = warp_affine_dataset(
-                            tgt_origs[i], translation_x=shift_x, translation_y=shift_y
-                        )
-                    with rasterio.open(temp_path, "w", **profile) as ds:
-                        for j in range(0, profile["count"]):
-                            if grey_output:
-                                ds.write(warped, j + 1)
-                            else:
-                                ds.write(warped[:, :, j], j + 1)
+                if grey_output:
+                    warped = tgt_aligned
+                else:
+                    warped = warp_affine_dataset(
+                        tgt_raws[i] if use_overlap else tgt_origs[i],
+                        translation_x=shift_x,
+                        translation_y=shift_y,
+                    )
+                with rasterio.open(temp_path, "w", **profile) as ds:
+                    for j in range(0, profile["count"]):
+                        if grey_output:
+                            ds.write(warped, j + 1)
+                        else:
+                            ds.write(warped[:, :, j], j + 1)
         except Exception as e:
             print(f"Algorithm did not converge for target {i} for the reason below:")
             if rethrow_error:
@@ -1639,7 +1633,13 @@ def co_register(
         ]
 
         if not use_overlap:
-            make_difference_gif(datasets_paths, out_gif, datasets_titles, fps=fps)
+            make_difference_gif(
+                datasets_paths,
+                out_gif,
+                datasets_titles,
+                fps=fps,
+                use_overlap=use_overlap,
+            )
 
         out_gif = os.path.join(
             output_path,
@@ -1681,7 +1681,7 @@ def co_register(
                 out_gif,
                 datasets_titles,
                 fps=fps,
-                align_origins=align_origins,
+                use_overlap=use_overlap,
             )
 
         if generate_csv:
@@ -1698,7 +1698,7 @@ def co_register(
 
     shutil.rmtree(temp_dir, ignore_errors=True)
 
-    return tgt_aligned_list, orig_aligned_shifts if align_origins else shifts
+    return tgt_aligned_list, shifts
 
 
 def apply_gamma(data, gamma=0.5, stretch_hist: bool = False, adjust_hist: bool = False):
