@@ -30,6 +30,7 @@ from torch import Tensor, cuda
 import itertools
 from pykml import parser
 from collections import namedtuple
+import warnings
 
 
 def get_sentinel_filenames(
@@ -799,6 +800,7 @@ def make_difference_gif(
     mosaic_offsets_x: list[int] = [],
     mosaic_offsets_y: list[int] = [],
     fps: int = 1,
+    align_origins: bool = False,
 ):
     os.makedirs("temp", exist_ok=True)
     temp_paths = [os.path.join("temp", os.path.basename(f)) for f in images_list]
@@ -851,11 +853,34 @@ def make_difference_gif(
             )
             images.append(img)
     else:
+        temp_images = []
+        transforms = []
         for i, p in enumerate(temp_paths):
-            img = rasterio.open(p).read()
+            img_raster = rasterio.open(p)
+            transforms.append(img_raster.profile["transform"])
+            img = img_raster.read()
             img = flip_img(img).copy().astype("uint8")
             if (len(img.shape) == 3) and (img.shape[2] == 1):
                 img = img[:, :, 0]
+            temp_images.append(img)
+
+        if align_origins:
+            aligned_temp_images = [temp_images[0]]
+            ref_x = abs(transforms[0].c / transforms[0].a)
+            ref_y = abs(transforms[0].f / transforms[0].e)
+            for i, img in enumerate(temp_images[1:]):
+                tgt_x = abs(transforms[i + 1].c / transforms[i + 1].a)
+                tgt_y = abs(transforms[i + 1].f / transforms[i + 1].e)
+                shift_x = ref_x - tgt_x
+                shift_y = ref_y - tgt_y
+                aligned_temp_images.append(
+                    warp_affine_dataset(
+                        img, translation_x=shift_x, translation_y=shift_y
+                    )
+                )
+            temp_images = aligned_temp_images.copy()
+            aligned_temp_images = None
+        for img in temp_images:
             cv.putText(
                 img,
                 titles_list[i],
@@ -1036,6 +1061,7 @@ def warp_affine_dataset(
     translation_y: float = 0.0,
     rotation_angle: float = 0.0,
     scale: float = 1.0,
+    write_new_transform: bool = False,  # if writing to an output file, changes the transform of the profile instead of shifting image pixels.
 ):
     """
     Transforms the dataset accroding to given translation, rotation and scale params and writes it to the `output_path` file.
@@ -1055,9 +1081,15 @@ def warp_affine_dataset(
 
     if (type(dataset) == str) and (output_path != ""):
         profile = ref.profile
-        with rasterio.open(output_path, "w", **profile) as ds:
-            for i in range(0, profile["count"]):
-                ds.write(warped_img[:, :, i], i + 1)
+        if write_new_transform:
+            profile["transform"] = rasterio.Affine(*affine_transform.ravel())
+            with rasterio.open(output_path, "w", **profile) as ds:
+                for i in range(0, profile["count"]):
+                    ds.write(img[:, :, i], i + 1)
+        else:
+            with rasterio.open(output_path, "w", **profile) as ds:
+                for i in range(0, profile["count"]):
+                    ds.write(warped_img[:, :, i], i + 1)
 
     return warped_img
 
@@ -1163,10 +1195,16 @@ def filter_features(
     bounding_shape: tuple,
     dists: np.ndarray,
     dist_thresh: Union[None, int, float] = None,
+    lower_of_dist_thresh: Union[None, int, float] = None,
 ) -> tuple:
 
     if dist_thresh != None:
-        filter_idx = np.where(np.squeeze(dists) < dist_thresh)
+        if lower_of_dist_thresh != None:
+            upper_idx = np.squeeze(dists) < dist_thresh
+            lower_idx = np.squeeze(dists) > lower_of_dist_thresh
+            filter_idx = np.where(np.logical_and(upper_idx, lower_idx))
+        else:
+            filter_idx = np.where(np.squeeze(dists) < dist_thresh)
         ref_good = np.squeeze(ref_points)[filter_idx]
         tgt_good = np.squeeze(tgt_points)[filter_idx]
 
@@ -1246,8 +1284,11 @@ def co_register(
     rethrow_error: bool = False,
     resampling_resolution: str = "lower",
     ligh_glue_max_points: int = 1000,
-    return_shifted_iamges: bool = False,
+    return_shifted_images: bool = False,
     laplacian_kernel_size: Union[None, int] = None,
+    lower_of_dist_thresh: Union[None, int, float] = None,
+    origin_dist_threshold: int = 1,  # pixels,
+    align_origins: bool = False,
 ) -> tuple:
 
     pca = PCA(2)
@@ -1257,44 +1298,118 @@ def co_register(
         termination_eps,
     )
 
-    if type(reference) == str:
-        ref_img = flip_img(rasterio.open(reference).read().copy())
-        ref_img = (
-            cv.cvtColor(ref_img, cv.COLOR_BGR2GRAY)
-            if ref_img.shape[2] != 1
-            else ref_img[:, :, 0]
-        )
-    else:
-        if len(reference.shape) == 2:
-            ref_img = reference
-        else:
-            ref_img = cv.cvtColor(reference, cv.COLOR_BGR2GRAY)
-    ref_img = ref_img.astype("uint8")
-    if laplacian_kernel_size is not None:
-        grey_ref = ref_img.copy()
-        ref_img = cv.Laplacian(ref_img, cv.CV_8U, ksize=laplacian_kernel_size)
-
     if (type(targets) == str) or (type(targets) == np.ndarray):
         targets = [targets]
 
-    tgt_imgs = []
-    tgt_origs = []
+    if align_origins:
+        use_overlap = False
+    if use_overlap:
+        align_origins = False
+
+    ref_raster = rasterio.open(reference)
+    tgt_profiles = []
     for tgt in targets:
         if type(tgt) == str:
-            img = flip_img(rasterio.open(tgt).read().copy())
-            tgt_origs.append(img.astype("uint8"))
-            img = (
-                cv.cvtColor(img, cv.COLOR_BGR2GRAY)
-                if img.shape[2] != 1
-                else img[:, :, 0]
+            tgt_raster = rasterio.open(tgt)
+            tgt_profiles.append(tgt_raster.profile)
+
+            ref_orig_x = abs(
+                ref_raster.profile["transform"].c / ref_raster.profile["transform"].a
             )
-            tgt_imgs.append(img.astype("uint8"))
+            ref_orig_y = abs(
+                ref_raster.profile["transform"].f / ref_raster.profile["transform"].e
+            )
+            ref_width = ref_raster.profile["width"]
+            ref_height = ref_raster.profile["height"]
+
+            tgt_orig_xs = [
+                abs(p["transform"].c / p["transform"].a) for p in tgt_profiles
+            ]
+            tgt_orig_ys = [
+                abs(p["transform"].f / p["transform"].e) for p in tgt_profiles
+            ]
+            tgt_widths = [p["width"] for p in tgt_profiles]
+            tgt_heights = [p["height"] for p in tgt_profiles]
+
+            orig_x_diff = np.abs(np.diff(np.array([ref_orig_x] + tgt_orig_xs)))
+            orig_y_diff = np.abs(np.diff(np.array([ref_orig_y] + tgt_orig_ys)))
+            w_diff = np.abs(np.diff(np.array([ref_width] + tgt_widths)))
+            h_diff = np.abs(np.diff(np.array([ref_height] + tgt_heights)))
+
+            if (
+                (not np.all(orig_x_diff < origin_dist_threshold))
+                or (not np.all(orig_y_diff < origin_dist_threshold))
+                or (not np.all(w_diff == 0))
+                or (not np.all(h_diff == 0))
+            ) and ((not use_overlap) and (not align_origins)):
+                warnings.warn(
+                    "Origins or shapes of the reference or target images do not match. Consider using the `use_overlap` or `align_origins` flag."
+                )
+
+    if use_overlap:
+        tgt_imgs = []
+        tgt_origs = []
+        tgt_raws = []
+        ref_imgs = []
+        for i, tgt in enumerate(targets):
+            tgt_raws.append(flip_img(rasterio.open(tgt).read().copy().astype("uint8")))
+            _, (_, _, ref_overlap, tgt_overlap) = find_overlap(
+                reference, tgt, True, resampling_resolution=resampling_resolution
+            )
+            ref_imgs.append(cv.cvtColor(ref_overlap, cv.COLOR_BGR2GRAY).astype("uint8"))
+            tgt_imgs.append(cv.cvtColor(tgt_overlap, cv.COLOR_BGR2GRAY).astype("uint8"))
+            tgt_origs.append(tgt_overlap.astype("uint8"))
+            grey_output = False
+            warnings.warn("Cannot generate Gif output in `use_overlap` mode.")
+    else:
+        if type(reference) == str:
+            ref_img = flip_img(ref_raster.read().copy())
+            ref_img = (
+                cv.cvtColor(ref_img, cv.COLOR_BGR2GRAY)
+                if ref_img.shape[2] != 1
+                else ref_img[:, :, 0]
+            )
         else:
-            if len(tgt.shape) == 2:
-                tgt_imgs.append(tgt.astype("uint8"))
+            if len(reference.shape) == 2:
+                ref_img = reference
             else:
-                tgt_imgs.append(cv.cvtColor(tgt, cv.COLOR_BGR2GRAY).astype("uint8"))
-            tgt_origs.append(tgt.astype("uint8"))
+                ref_img = cv.cvtColor(reference, cv.COLOR_BGR2GRAY)
+        ref_img = ref_img.astype("uint8")
+
+        tgt_imgs = []
+        tgt_origs = []
+        for tgt in targets:
+            if type(tgt) == str:
+                tgt_raster = rasterio.open(tgt)
+                img = flip_img(tgt_raster.read().copy())
+                tgt_origs.append(img.astype("uint8"))
+                img = (
+                    cv.cvtColor(img, cv.COLOR_BGR2GRAY)
+                    if img.shape[2] != 1
+                    else img[:, :, 0]
+                )
+                tgt_imgs.append(img.astype("uint8"))
+            else:
+                if len(tgt.shape) == 2:
+                    tgt_imgs.append(tgt.astype("uint8"))
+                else:
+                    tgt_imgs.append(cv.cvtColor(tgt, cv.COLOR_BGR2GRAY).astype("uint8"))
+                tgt_origs.append(tgt.astype("uint8"))
+        tgt_raws = tgt_origs.copy()
+
+    ref_imgs_temp = []
+    if laplacian_kernel_size is not None:
+        if use_overlap:
+            for ref_img in ref_imgs:
+                ref_imgs_temp.append(
+                    cv.Laplacian(ref_img, cv.CV_8U, ksize=laplacian_kernel_size)
+                )
+            grey_refs = ref_imgs.copy()
+            ref_imgs = ref_imgs_temp.copy()
+            ref_imgs_temp = None
+        else:
+            grey_ref = ref_img.copy()
+            ref_img = cv.Laplacian(ref_img, cv.CV_8U, ksize=laplacian_kernel_size)
 
     tgt_imgs_temp = []
     if laplacian_kernel_size is not None:
@@ -1302,41 +1417,16 @@ def co_register(
             tgt_imgs_temp.append(
                 cv.Laplacian(tgt_img, cv.CV_8U, ksize=laplacian_kernel_size)
             )
-        grey_tgts = tgt_imgs
-        tgt_imgs = tgt_imgs_temp
+        grey_tgts = tgt_imgs.copy()
+        tgt_imgs = tgt_imgs_temp.copy()
         tgt_imgs_temp = None
-
-    if use_overlap:
-        temp_tgt_imgs = []
-        temp_ref_img = np.zeros(0)
-        temp_dir = "temp/overlap_inputs"
-        os.makedirs(temp_dir, exist_ok=True)
-        ref_temp = os.path.join(temp_dir, "ref_temp.tif")
-        with rasterio.open(ref_temp, "w", **rasterio.open(reference).profile) as ds:
-            ds.write(ref_img, 1)
-        for i, tgt in enumerate(tgt_imgs):
-            tgt_temp = os.path.join(temp_dir, "tgt_temp.tif")
-            with rasterio.open(
-                tgt_temp, "w", **rasterio.open(targets[i]).profile
-            ) as ds:
-                ds.write(tgt, 1)
-            _, (_, _, ref_overlap, tgt_overlap) = find_overlap(
-                ref_temp, tgt_temp, True, resampling_resolution=resampling_resolution
-            )
-            if i == 0:
-                temp_ref_img = ref_overlap
-            temp_tgt_imgs.append(cv.cvtColor(tgt_overlap, cv.COLOR_BGR2GRAY))
-        ref_img = cv.cvtColor(temp_ref_img, cv.COLOR_BGR2GRAY)
-        tgt_imgs = temp_tgt_imgs
-        shutil.rmtree(temp_dir, ignore_errors=True)
-        grey_output: False
 
     if generate_gif:
         export_outputs = True
     if export_outputs or generate_gif:
         if (type(reference) != str) or (any(type(el) != str for el in targets)):
             print(
-                "To genrate output GeoTiffs or GIF animation all inputs should be string paths to input scenes. Setting related flags to False."
+                "To generate output GeoTiffs or GIF animation all inputs should be string paths to input scenes. Setting related flags to False."
             )
             export_outputs = False
             generate_gif = False
@@ -1348,13 +1438,16 @@ def co_register(
     processed_tgt_images = []
     processed_output_images = []
     shifts = []
+    orig_aligned_shifts = []
 
     temp_dir = "temp/outputs"
     os.makedirs(temp_dir, exist_ok=True)
-    if return_shifted_iamges:
+    if return_shifted_images:
         aligned_output_dir = os.path.join(output_path, "Aligned")
         os.makedirs(aligned_output_dir, exist_ok=True)
     for i, tgt_img in enumerate(tgt_imgs):
+        if use_overlap:
+            ref_img = ref_imgs[i]
         try:
             if filtering_mode == "pca":
                 pca_diff = pca.fit_transform(ref_img - tgt_img)
@@ -1399,7 +1492,14 @@ def co_register(
                     dist = np.linalg.norm(p1 - p0, axis=1)
 
                 ref_good, tgt_good = filter_features(
-                    p0, p1, ref_img, tgt_img, tgt_img_pca.shape, dist, of_dist_thresh
+                    p0,
+                    p1,
+                    ref_img,
+                    tgt_img,
+                    tgt_img_pca.shape,
+                    dist,
+                    of_dist_thresh,
+                    lower_of_dist_thresh,
                 )
                 h, inliers = cv.estimateAffine2D(tgt_good, ref_good)
 
@@ -1430,6 +1530,9 @@ def co_register(
                         )
 
             shifts.append((shift_x, shift_y))
+            shift_x_aligned_orig = shift_x - (ref_orig_x - tgt_orig_xs[i])
+            shift_y_aligned_orig = shift_y - (ref_orig_y - tgt_orig_ys[i])
+            orig_aligned_shifts.append((shift_x_aligned_orig, shift_y_aligned_orig))
 
             if shift_x == np.inf:
                 print(f"No valid shifts found.")
@@ -1452,27 +1555,44 @@ def co_register(
             tgt_aligned_list.append(tgt_aligned)
 
             if export_outputs:
-                if not return_shifted_iamges:
-                    temp_path = os.path.join(temp_dir, f"out_{i}.tiff")
-                else:
-                    temp_path = os.path.join(
-                        aligned_output_dir, os.path.basename(targets[i])
+                profile = tgt_profiles[i]
+                temp_path = os.path.join(temp_dir, f"out_{i}.tiff")
+                if return_shifted_images:
+                    updated_profile = profile.copy()
+                    updated_profile["transform"] = rasterio.Affine(
+                        profile["transform"].a,
+                        profile["transform"].b,
+                        profile["transform"].c
+                        + (shift_x_aligned_orig if align_origins else shift_x)
+                        * profile["transform"].a,
+                        profile["transform"].d,
+                        profile["transform"].e,
+                        profile["transform"].f
+                        + (shift_y_aligned_orig if align_origins else shift_y)
+                        * profile["transform"].e,
                     )
+                    with rasterio.open(
+                        os.path.join(aligned_output_dir, os.path.basename(targets[i])),
+                        "w",
+                        **updated_profile,
+                    ) as ds:
+                        for j in range(0, updated_profile["count"]):
+                            ds.write(tgt_raws[i][:, :, j], j + 1)
                 processed_output_images.append(temp_path)
                 processed_tgt_images.append(targets[i])
-                profile = rasterio.open(targets[i]).profile
-                if grey_output:
-                    warped = tgt_aligned
-                else:
-                    warped = warp_affine_dataset(
-                        tgt_origs[i], translation_x=shift_x, translation_y=shift_y
-                    )
-                with rasterio.open(temp_path, "w", **profile) as ds:
-                    for j in range(0, profile["count"]):
-                        if grey_output:
-                            ds.write(warped, j + 1)
-                        else:
-                            ds.write(warped[:, :, j], j + 1)
+                if not use_overlap:
+                    if grey_output:
+                        warped = tgt_aligned
+                    else:
+                        warped = warp_affine_dataset(
+                            tgt_origs[i], translation_x=shift_x, translation_y=shift_y
+                        )
+                    with rasterio.open(temp_path, "w", **profile) as ds:
+                        for j in range(0, profile["count"]):
+                            if grey_output:
+                                ds.write(warped, j + 1)
+                            else:
+                                ds.write(warped[:, :, j], j + 1)
         except Exception as e:
             print(f"Algorithm did not converge for target {i} for the reason below:")
             if rethrow_error:
@@ -1484,6 +1604,7 @@ def co_register(
     if generate_gif:
         if laplacian_kernel_size is not None:
             ref_img = grey_ref
+            ref_imgs = grey_refs
         out_gif = os.path.join(
             output_path,
             f'{filtering_mode}{"" if enhanced_shift_method == "" else "_" + enhanced_shift_method}.gif',
@@ -1494,11 +1615,20 @@ def co_register(
             os.remove(out_gif)
         datasets_paths = [reference] + processed_output_images
         ssims_aligned = [
-            np.round(ssim(ref_img, tgt_aligned_list[id], win_size=3), 3)
+            np.round(
+                ssim(
+                    ref_imgs[id] if use_overlap else ref_img,
+                    tgt_aligned_list[id],
+                    win_size=3,
+                ),
+                3,
+            )
             for id in range(len(tgt_aligned_list))
         ]
         mse_aligned = [
-            np.round(mse(ref_img, tgt_aligned_list[id]), 3)
+            np.round(
+                mse(ref_imgs[id] if use_overlap else ref_img, tgt_aligned_list[id]), 3
+            )
             for id in range(len(tgt_aligned_list))
         ]
         datasets_titles = ["Reference"] + [
@@ -1507,7 +1637,9 @@ def co_register(
                 target_titles, ssims_aligned, mse_aligned
             )
         ]
-        make_difference_gif(datasets_paths, out_gif, datasets_titles, fps=fps)
+
+        if not use_overlap:
+            make_difference_gif(datasets_paths, out_gif, datasets_titles, fps=fps)
 
         out_gif = os.path.join(
             output_path,
@@ -1519,7 +1651,7 @@ def co_register(
         ssims_raw = [
             np.round(
                 ssim(
-                    ref_img,
+                    ref_imgs[id] if use_overlap else ref_img,
                     tgt_imgs[id] if laplacian_kernel_size is None else grey_tgts[id],
                     win_size=3,
                 ),
@@ -1530,7 +1662,7 @@ def co_register(
         mse_raw = [
             np.round(
                 mse(
-                    ref_img,
+                    ref_imgs[id] if use_overlap else ref_img,
                     tgt_imgs[id] if laplacian_kernel_size is None else grey_tgts[id],
                 ),
                 3,
@@ -1543,7 +1675,14 @@ def co_register(
                 target_titles, ssims_raw, mse_raw
             )
         ]
-        make_difference_gif(datasets_paths, out_gif, datasets_titles, fps=fps)
+        if not use_overlap:
+            make_difference_gif(
+                datasets_paths,
+                out_gif,
+                datasets_titles,
+                fps=fps,
+                align_origins=align_origins,
+            )
 
         if generate_csv:
             out_ssim = os.path.join(
@@ -1559,7 +1698,7 @@ def co_register(
 
     shutil.rmtree(temp_dir, ignore_errors=True)
 
-    return tgt_aligned_list, shifts
+    return tgt_aligned_list, orig_aligned_shifts if align_origins else shifts
 
 
 def apply_gamma(data, gamma=0.5, stretch_hist: bool = False, adjust_hist: bool = False):
