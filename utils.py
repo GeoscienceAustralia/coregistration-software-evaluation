@@ -802,7 +802,7 @@ def make_difference_gif(
     fps: int = 1,
     use_overlap: bool = False,
     font_scale: float = 1.5,
-    thickness: float = 3.0,
+    thickness: int = 3,
     color: tuple = (255, 0, 0),
     origin: tuple = (5, 50),
 ):
