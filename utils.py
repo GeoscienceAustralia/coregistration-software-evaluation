@@ -801,6 +801,10 @@ def make_difference_gif(
     mosaic_offsets_y: list[int] = [],
     fps: int = 1,
     use_overlap: bool = False,
+    font_scale: float = 1.5,
+    thickness: float = 3.0,
+    color: tuple = (255, 0, 0),
+    origin: tuple = (5, 50),
 ):
     os.makedirs("temp", exist_ok=True)
     temp_paths = [os.path.join("temp", os.path.basename(f)) for f in images_list]
@@ -822,14 +826,6 @@ def make_difference_gif(
 
     images = []
     font = cv.FONT_HERSHEY_SIMPLEX
-    # origin
-    origin = (5, 50)
-    font_scale = 1.5
-    # Blue color in BGR
-    color = (255, 0, 0)
-    # Line thickness
-    thickness = 3
-
     if mosaic_scenes:
         ref_scene = temp_paths[0]
         tgt_scenes = temp_paths[1:]
@@ -1076,8 +1072,8 @@ def warp_affine_dataset(
     Transforms the dataset accroding to given translation, rotation and scale params and writes it to the `output_path` file.
     """
     if type(dataset) == str:
-        ref = rasterio.open(dataset)
-        img = flip_img(ref.read()).copy()
+        raster = rasterio.open(dataset)
+        img = flip_img(raster.read()).copy()
     else:
         img = dataset
     img_centre = (img.shape[1] // 2, img.shape[0] // 2)
@@ -1089,7 +1085,7 @@ def warp_affine_dataset(
     warped_img = cv.warpAffine(img, affine_transform, (img.shape[1], img.shape[0]))
 
     if (type(dataset) == str) and (output_path != ""):
-        profile = ref.profile
+        profile = raster.profile
         if write_new_transform:
             profile["transform"] = rasterio.Affine(*affine_transform.ravel())
             with rasterio.open(output_path, "w", **profile) as ds:
@@ -1632,14 +1628,13 @@ def co_register(
             )
         ]
 
-        if not use_overlap:
-            make_difference_gif(
-                datasets_paths,
-                out_gif,
-                datasets_titles,
-                fps=fps,
-                use_overlap=use_overlap,
-            )
+        make_difference_gif(
+            datasets_paths,
+            out_gif,
+            datasets_titles,
+            fps=fps,
+            use_overlap=use_overlap,
+        )
 
         out_gif = os.path.join(
             output_path,
@@ -1675,14 +1670,13 @@ def co_register(
                 target_titles, ssims_raw, mse_raw
             )
         ]
-        if not use_overlap:
-            make_difference_gif(
-                datasets_paths,
-                out_gif,
-                datasets_titles,
-                fps=fps,
-                use_overlap=use_overlap,
-            )
+        make_difference_gif(
+            datasets_paths,
+            out_gif,
+            datasets_titles,
+            fps=fps,
+            use_overlap=use_overlap,
+        )
 
         if generate_csv:
             out_ssim = os.path.join(
