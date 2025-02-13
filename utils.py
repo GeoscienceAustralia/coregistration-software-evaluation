@@ -1783,6 +1783,7 @@ def get_landsat_search_query(
     platform: str = "LANDSAT_8",
     start_date: str = "2014-10-30T00:00:00",
     end_date: str = "2015-01-23T23:59:59",
+    cloud_cover: int = 80,
 ) -> dict:
     if type(bbox) != list:
         bbox = [bbox.left, bbox.bottom, bbox.right, bbox.top]
@@ -1790,7 +1791,7 @@ def get_landsat_search_query(
         "bbox": bbox,
         "collections": collections,
         "query": {
-            "eo:cloud_cover": {"lte": 50},
+            "eo:cloud_cover": {"lte": cloud_cover},
             "platform": {"in": [platform]},
             "landsat:collection_category": {"in": ["T1", "T2", "RT"]},
         },
@@ -1963,3 +1964,11 @@ def read_kml_polygon(
         bbox = BoundingBox(min(xs), min(ys), max(xs), max(ys))
 
     return coords, bbox
+
+
+def stream_scene(geotiff_file, aws_session):
+    with rasterio.Env(aws_session):
+        with rasterio.open(geotiff_file) as geo_fp:
+            subset = geo_fp.read(1)
+            profile = geo_fp.profile
+    return subset, profile
