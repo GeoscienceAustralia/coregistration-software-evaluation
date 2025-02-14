@@ -31,6 +31,8 @@ import itertools
 from pykml import parser
 from collections import namedtuple
 import warnings
+from bs4 import BeautifulSoup
+import html5lib
 
 
 def get_sentinel_filenames(
@@ -1041,6 +1043,52 @@ def resize_bbox(bbox, scale_factor=1.0):
     return BoundingBox(bbox.left - dx, bbox.bottom - dy, bbox.right + dx, bbox.top + dy)
 
 
+UTM = namedtuple("UTM", ["x", "y"])
+LLA = namedtuple("LLA", ["lat", "lon"])
+
+
+def UTMtoLLA(utm: UTM, crs: dict):
+    """
+    `UMT(x, y)`
+
+    crs example:
+    ```
+    crs = {
+        'proj': 'utm',
+        'zone': 42,
+        'south': True,
+        'datum': 'WGS84',
+        'units': 'm',
+        'no_defs': True
+    }
+    ```
+    """
+    proj = Proj(**crs)
+    lla = proj(utm.x, utm.y, inverse=True)
+    return LLA(lla[1], lla[0])
+
+
+def LLAtoUTM(lla: LLA, crs: dict):
+    """
+    `LLA(lat, lon)`
+
+    crs example:
+    ```
+    crs = {
+        'proj': 'utm',
+        'zone': 42,
+        'south': True,
+        'datum': 'WGS84',
+        'units': 'm',
+        'no_defs': True
+    }
+    ```
+    """
+    proj = Proj(**crs)
+    utm = proj(lla.lon, lla.lat)
+    return UTM(utm[0], utm[1])
+
+
 def find_scene_bounding_box_lla(scene: str, scale_factor=1.0):
     raster = rasterio.open(scene)
     raster_bounds = raster.bounds
@@ -1966,9 +2014,14 @@ def read_kml_polygon(
     return coords, bbox
 
 
-def stream_scene(geotiff_file, aws_session):
+def stream_scene_from_aws(geotiff_file, aws_session, metadata_only: bool = False):
+    scene = np.zeros(0)
     with rasterio.Env(aws_session):
         with rasterio.open(geotiff_file) as geo_fp:
-            subset = geo_fp.read(1)
             profile = geo_fp.profile
-    return subset, profile
+            bounds = geo_fp.bounds
+            crs = geo_fp.crs
+            if not metadata_only:
+                scene = geo_fp.read()
+    return scene, {"profile": profile, "bounds": bounds, "crs": crs}
+
