@@ -20,19 +20,14 @@ from rasterio.coords import BoundingBox
 from typing import Union
 from itertools import product as itrprod
 import re
-from sklearn.decomposition import PCA
 from skimage.metrics import structural_similarity as ssim
 from skimage.metrics import mean_squared_error as mse
 from skimage.exposure import equalize_hist, rescale_intensity
-from lightglue import LightGlue, SuperPoint
-from lightglue.utils import rbd, numpy_image_to_torch
 from torch import Tensor, cuda
 import itertools
 from pykml import parser
 from collections import namedtuple
 import warnings
-from bs4 import BeautifulSoup
-import html5lib
 
 
 def get_sentinel_filenames(
@@ -1301,7 +1296,6 @@ def co_register(
     targets=Union[
         str, np.ndarray, list[str], list[np.ndarray], list[Union[str, np.ndarray]]
     ],
-    filtering_mode: str = "of",  # "lg", "of", "pca" or "pca_of"
     number_of_iterations=10,
     termination_eps=1e-5,
     of_params: dict = dict(
@@ -1324,7 +1318,6 @@ def co_register(
     generate_csv: bool = True,
     fps: int = 3,
     of_dist_thresh: Union[None, int, float] = 5,  # pixels
-    pca_dist_thresh: int = 25,  # pixels
     filter_by_ground_res: bool = False,
     ground_resolution: float = 10.0,  # meters
     ground_resolution_limit: float = 10.0,  # meters
@@ -1343,7 +1336,6 @@ def co_register(
     origin_dist_threshold: int = 1,  # pixels,
 ) -> tuple:
 
-    pca = PCA(2)
     criteria = (
         cv.TERM_CRITERIA_EPS | cv.TERM_CRITERIA_COUNT,
         number_of_iterations,
@@ -1493,85 +1485,54 @@ def co_register(
         if use_overlap:
             ref_img = ref_imgs[i]
         try:
-            if filtering_mode == "pca":
-                pca_diff = pca.fit_transform(ref_img - tgt_img)
-                pca_idx = np.where(abs(pca_diff[:, 1]) < pca_dist_thresh)
+            p0 = cv.goodFeaturesToTrack(
+                ref_img, mask=None, **of_params["feature_params"]
+            )
+            p1, st, _ = cv.calcOpticalFlowPyrLK(
+                ref_img,
+                tgt_img,
+                p0,
+                None,
+                **of_params["lk_params"],
+                criteria=criteria,
+            )
+            dist = np.linalg.norm(p1[st == 1] - p0[st == 1], axis=1)
 
-                ref_good = ref_img[pca_idx]
-                tgt_good = tgt_img[pca_idx]
+            ref_good, tgt_good = filter_features(
+                p0,
+                p1,
+                ref_img,
+                tgt_img,
+                tgt_img.shape,
+                dist,
+                of_dist_thresh,
+                lower_of_dist_thresh,
+            )
+            h, inliers = cv.estimateAffine2D(tgt_good, ref_good)
 
-                ((shift_x, shift_y), _) = cv.phaseCorrelate(
-                    np.float32(tgt_good), np.float32(ref_good), None
-                )
-                enhanced_shift_method = ""
+            if enhanced_shift_method == "":
+                shift_x = h[0, 2]
+                shift_y = h[1, 2]
             else:
-                if filtering_mode == "pca_of":
-                    pca_diff = pca.fit_transform(ref_img - tgt_img)
-                    pca_idx = np.where(abs(pca_diff[:, 1]) < pca_dist_thresh)
-
-                    ref_img_pca = ref_img[pca_idx]
-                    tgt_img_pca = tgt_img[pca_idx]
-                else:
-                    ref_img_pca = ref_img.copy()
-                    tgt_img_pca = tgt_img.copy()
-
-                if (filtering_mode == "of") or (filtering_mode == "pca_of"):
-                    p0 = cv.goodFeaturesToTrack(
-                        ref_img_pca, mask=None, **of_params["feature_params"]
+                if enhanced_shift_method == "corr":
+                    if not remove_outlilers:
+                        inliers = []
+                    shift_x, shift_y = find_corrs_shifts(
+                        ref_img,
+                        tgt_img,
+                        ref_good,
+                        tgt_good,
+                        inliers,
+                        corr_win_size,
+                        corr_thresh,
                     )
-                    p1, st, _ = cv.calcOpticalFlowPyrLK(
-                        ref_img_pca,
-                        tgt_img_pca,
-                        p0,
-                        None,
-                        **of_params["lk_params"],
-                        criteria=criteria,
-                    )
-
-                    dist = np.linalg.norm(p1[st == 1] - p0[st == 1], axis=1)
                 else:
-                    p0, p1 = extract_light_glue_features(
-                        ref_img, tgt_img, ligh_glue_max_points
-                    )
-                    dist = np.linalg.norm(p1 - p0, axis=1)
-
-                ref_good, tgt_good = filter_features(
-                    p0,
-                    p1,
-                    ref_img,
-                    tgt_img,
-                    tgt_img_pca.shape,
-                    dist,
-                    of_dist_thresh,
-                    lower_of_dist_thresh,
-                )
-                h, inliers = cv.estimateAffine2D(tgt_good, ref_good)
-
-                if enhanced_shift_method == "":
-                    shift_x = h[0, 2]
-                    shift_y = h[1, 2]
-                else:
-                    if enhanced_shift_method == "corr":
-                        if not remove_outlilers:
-                            inliers = []
-                        shift_x, shift_y = find_corrs_shifts(
-                            ref_img_pca,
-                            tgt_img_pca,
-                            ref_good,
-                            tgt_good,
-                            inliers,
-                            corr_win_size,
-                            corr_thresh,
-                        )
-                    else:
-                        ref_good_temp = ref_good[0, :, :]
-                        tgt_good_temp = tgt_good[0, :, :]
-                        if remove_outlilers:
-                            ref_good_temp = ref_good_temp[inliers.ravel().astype(bool)]
-                            tgt_good_temp = tgt_good_temp[inliers.ravel().astype(bool)]
-                        shift_x, shift_y = np.mean(
-                            ref_good_temp - tgt_good_temp, axis=0
-                        )
+                    ref_good_temp = ref_good[0, :, :]
+                    tgt_good_temp = tgt_good[0, :, :]
+                    if remove_outlilers:
+                        ref_good_temp = ref_good_temp[inliers.ravel().astype(bool)]
+                        tgt_good_temp = tgt_good_temp[inliers.ravel().astype(bool)]
+                    shift_x, shift_y = np.mean(ref_good_temp - tgt_good_temp, axis=0)
 
             shifts.append((shift_x, shift_y))
 
@@ -1645,7 +1606,7 @@ def co_register(
             ref_imgs = grey_refs
         out_gif = os.path.join(
             output_path,
-            f'{filtering_mode}{"" if enhanced_shift_method == "" else "_" + enhanced_shift_method}.gif',
+            f'of{"" if enhanced_shift_method == "" else "_" + enhanced_shift_method}.gif',
         )
         target_titles = [f"target_{id}" for id in range(len(tgt_aligned_list))]
 
@@ -1686,7 +1647,7 @@ def co_register(
 
         out_gif = os.path.join(
             output_path,
-            f'raw_{filtering_mode}{"" if enhanced_shift_method == "" else "_" + enhanced_shift_method}.gif',
+            f'raw_of{"" if enhanced_shift_method == "" else "_" + enhanced_shift_method}.gif',
         )
         if os.path.isfile(out_gif):
             os.remove(out_gif)
@@ -1729,7 +1690,7 @@ def co_register(
         if generate_csv:
             out_ssim = os.path.join(
                 output_path,
-                f'{filtering_mode}{"" if enhanced_shift_method == "" else "_" + enhanced_shift_method}.csv',
+                f'of{"" if enhanced_shift_method == "" else "_" + enhanced_shift_method}.csv',
             )
             out_ssim_df = pd.DataFrame(
                 zip(target_titles, ssims_raw, ssims_aligned, mse_raw, mse_aligned),
@@ -1880,62 +1841,6 @@ def make_landsat_true_color_scene(
     return img
 
 
-def load_array_image(
-    image: np.ndarray,
-    grayscale: bool = True,
-    use_cuda: bool = False,
-) -> Tensor:
-    if not grayscale:
-        image = image[..., ::-1]
-    image = numpy_image_to_torch(image)
-    if use_cuda:
-        image.cuda()
-    return image
-
-
-def extract_light_glue_features(
-    ref_img: np.ndarray,
-    tgt_img: np.ndarray,
-    max_num_points: int = 1000,
-    grayscale: bool = True,
-) -> tuple:
-
-    use_cuda = False
-    if cuda.is_available():
-        use_cuda = True
-
-    extractor = SuperPoint(
-        max_num_keypoints=max_num_points
-    ).eval()  # load the extractor
-    matcher = LightGlue(features="superpoint").eval()  # load the matcher
-
-    if use_cuda:
-        extractor = extractor.cuda()
-        matcher = matcher.cuda()
-
-    image0 = load_array_image(ref_img, grayscale, use_cuda)
-    image1 = load_array_image(tgt_img, grayscale, use_cuda)
-
-    feats0 = extractor.extract(
-        image0
-    )  # auto-resize the image, disable with resize=None
-    feats1 = extractor.extract(image1)
-    matches01 = matcher({"image0": feats0, "image1": feats1})
-    feats0, feats1, matches01 = [
-        rbd(x) for x in [feats0, feats1, matches01]
-    ]  # remove batch dimension
-    matches = matches01["matches"]  # indices with shape (K,2)
-    points0 = feats0["keypoints"][
-        matches[..., 0]
-    ]  # coordinates in image #0, shape (K,2)
-    points1 = feats1["keypoints"][
-        matches[..., 1]
-    ]  # coordinates in image #1, shape (K,2)
-    features = points0.numpy().astype("int")
-    moved_features = points1.numpy().astype("int")
-    return features, moved_features
-
-
 def tracking_image(
     ref_points: np.ndarray,
     tgt_points: np.ndarray,
@@ -2024,4 +1929,3 @@ def stream_scene_from_aws(geotiff_file, aws_session, metadata_only: bool = False
             if not metadata_only:
                 scene = geo_fp.read()
     return scene, {"profile": profile, "bounds": bounds, "crs": crs}
-
