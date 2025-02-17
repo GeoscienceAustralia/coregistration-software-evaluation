@@ -27,6 +27,7 @@ import itertools
 from pykml import parser
 from collections import namedtuple
 import warnings
+import utm as utm_convrter
 
 
 def get_sentinel_filenames(
@@ -1069,8 +1070,12 @@ def LLAtoUTM(lla: LLA, crs: dict):
     ```
     """
     proj = Proj(**crs)
-    utm = proj(lla.lon, lla.lat)
-    return UTM(utm[0], utm[1])
+    if crs["proj"] != "utm":
+        e, n, _, _ = utm_convrter.from_latlon(lla.lat, lla.lon)
+        return UTM(float(e), float(n))
+    else:
+        utm = proj(lla.lon, lla.lat)
+        return UTM(utm[0], utm[1])
 
 
 def find_scene_bounding_box_lla(scene: str, scale_factor=1.0):
