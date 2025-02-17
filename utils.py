@@ -23,7 +23,6 @@ import re
 from skimage.metrics import structural_similarity as ssim
 from skimage.metrics import mean_squared_error as mse
 from skimage.exposure import equalize_hist, rescale_intensity
-from torch import Tensor, cuda
 import itertools
 from pykml import parser
 from collections import namedtuple
@@ -796,7 +795,7 @@ def make_difference_gif(
     mosaic_scenes: bool = False,
     mosaic_offsets_x: int = 0,
     mosaic_offsets_y: int = 0,
-    fps: int = 1,
+    fps: int = 3,
     font_scale: float = 1.5,
     thickness: int = 3,
     color: tuple = (255, 0, 0),
