@@ -27,6 +27,7 @@ import itertools
 from pykml import parser
 from collections import namedtuple
 import warnings
+import utm as utm_convrter
 
 
 def get_sentinel_filenames(
@@ -697,14 +698,19 @@ def make_mosaic(
     ps_x = []
     ps_y = []
     rasters = []
+    crss = []
     transforms = []
+    boundss = []
     for p in dataset_paths:
         raster = rasterio.open(p)
-        transform = raster.profile["transform"]
+        transform = raster.transform
         ps_x.append(abs(round(transform.a)))
         ps_y.append(abs(round(transform.e)))
         rasters.append(raster)
         transforms.append(transform)
+        crs = raster.crs.data
+        crss.append(crs)
+        boundss.append(utm_bounds(raster.bounds, crs))
 
     ps_x_condition = all(ps == ps_x[0] for ps in ps_x)
     ps_y_conditoin = all(ps == ps_y[0] for ps in ps_y)
@@ -716,8 +722,7 @@ def make_mosaic(
     rights = []
     tops = []
     bottoms = []
-    for r in rasters:
-        bounds = r.bounds
+    for bounds in boundss:
         lefts.append(abs(bounds.left // transform.a))
         rights.append(abs(bounds.right // transform.a))
         tops.append(abs(bounds.top // transform.e))
@@ -734,12 +739,14 @@ def make_mosaic(
     )
 
     new_transforms = []
-    for t in transforms:
+    for i, t in enumerate(transforms):
+        orig_x = boundss[i].left
+        orig_y = boundss[i].top
         new_transforms.append(
             np.array(
                 [
-                    [1.0, abs(t.b // t.e), t.c // t.a - min_left],
-                    [t.d // t.a, 1.0, max_top - abs(t.f // t.e)],
+                    [1.0, abs(t.b // t.e), orig_x // t.a - min_left],
+                    [t.d // t.a, 1.0, max_top - abs(orig_y // t.e)],
                 ]
             )
         )
@@ -1069,8 +1076,32 @@ def LLAtoUTM(lla: LLA, crs: dict):
     ```
     """
     proj = Proj(**crs)
-    utm = proj(lla.lon, lla.lat)
-    return UTM(utm[0], utm[1])
+    if crs["proj"] != "utm":
+        e, n, _, _ = utm_convrter.from_latlon(lla.lat, lla.lon)
+        return UTM(float(e), float(n))
+    else:
+        utm = proj(lla.lon, lla.lat)
+        return UTM(utm[0], utm[1])
+
+
+def utm_bounds(bounds: BoundingBox, crs: dict, skip_stereo: bool = True) -> BoundingBox:
+    has_negative = any(b < 0 for b in bounds)
+    if (crs["proj"] == "stere") and (skip_stereo):
+        return bounds
+    if (crs["proj"] == "stere") or (
+        (crs["proj"] == "utm") and ("south" not in crs) and (has_negative)
+    ):
+        lla_bl = UTMtoLLA(UTM(bounds.left, bounds.bottom), crs)
+        lla_tr = UTMtoLLA(UTM(bounds.right, bounds.top), crs)
+        utm_bl = LLAtoUTM(
+            lla_bl, {"south": True} | crs if crs["proj"] == "utm" else crs
+        )
+        utm_tr = LLAtoUTM(
+            lla_tr, {"south": True} | crs if crs["proj"] == "utm" else crs
+        )
+        return BoundingBox(utm_bl.x, utm_bl.y, utm_tr.x, utm_tr.y)
+    elif crs["proj"] == "utm":
+        return bounds
 
 
 def find_scene_bounding_box_lla(scene: str, scale_factor=1.0):
@@ -1267,16 +1298,17 @@ def filter_features(
         )
         valid_idx = np.array(list(set(range(0, len(ref_good))) - invalid_idx))
 
+        if len(valid_idx) == 0:
+            warnings.warn(
+                f"WARNING: couldn't find valid features for target or reference."
+            )
+
         tgt_good = np.expand_dims(tgt_good[valid_idx], axis=0)
         ref_good = np.expand_dims(ref_good[valid_idx], axis=0)
     else:
         tgt_good = np.expand_dims(tgt_points, axis=0)
         ref_good = np.expand_dims(ref_points, axis=0)
 
-    if (ref_good.shape[1] < 4) or (tgt_good.shape[1] < 4):
-        print(
-            f"WARNING: couldn't find enough good features for target or reference. num ref features: {ref_good.shape[0]}, num tgt features = {tgt_good.shape[0]}"
-        )
     return ref_good, tgt_good
 
 
@@ -1503,6 +1535,11 @@ def co_register(
                 of_dist_thresh,
                 lower_of_dist_thresh,
             )
+
+            if (ref_good.shape[1] < 4) or (tgt_good.shape[1] < 4):
+                print(
+                    f"WARNING: couldn't find enough good features for target or reference. num ref features: {ref_good.shape[0]}, num tgt features = {tgt_good.shape[0]}"
+                )
             h, inliers = cv.estimateAffine2D(tgt_good, ref_good)
 
             if enhanced_shift_method == "":
@@ -1589,7 +1626,7 @@ def co_register(
                 )
         except Exception as e:
             print(
-                f"Algorithm did not converge for target {i} ({os.path.basename(targets[i])}) for the reason below:"
+                f"Algorithm did not converge for target {i} ({os.path.basename(targets[i])}) {'for the reason below:' if rethrow_error else ''}"
             )
             if rethrow_error:
                 raise
@@ -1814,22 +1851,22 @@ def make_landsat_true_color_scene(
     profile["count"] = 3
     profile["dtype"] = "uint8"
 
-    reds = apply_gamma(rasterio.open(red).read(), 1.0, True)[0, :, :]
+    reds = rasterio.open(red).read()
     redf = flip_img(reds)
 
-    greens = apply_gamma(rasterio.open(green).read(), 1.0, True)[0, :, :]
+    greens = rasterio.open(green).read()
     greenf = flip_img(greens)
 
-    blues = apply_gamma(rasterio.open(blue).read(), 1.0, True)[0, :, :]
+    blues = rasterio.open(blue).read()
     bluef = flip_img(blues)
 
-    img = cv.merge([redf, greenf, bluef])
+    img = apply_gamma(cv.merge([redf, greenf, bluef]), 1.0, True)
 
     if output_path != "":
         with rasterio.open(output_path, "w", **profile) as ds:
-            ds.write(reds, 1)
-            ds.write(greens, 2)
-            ds.write(blues, 3)
+            ds.write(img[:, :, 0], 1)
+            ds.write(img[:, :, 1], 2)
+            ds.write(img[:, :, 2], 3)
 
     return img
 
