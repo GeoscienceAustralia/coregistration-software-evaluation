@@ -683,9 +683,9 @@ def make_mosaic(
     """
 
     if resolution_adjustment:
-        os.makedirs("temp", exist_ok=True)
+        os.makedirs("temp/res_adjustment", exist_ok=True)
         new_dataset_paths = [
-            os.path.join("temp", f"scaled_raster_{i}.tif")
+            os.path.join("temp/res_adjustment", f"scaled_raster_{i}.tif")
             for i in range(len(dataset_paths))
         ]
         adjust_resolutions(
@@ -767,7 +767,7 @@ def make_mosaic(
             warps.append(warp)
 
     if resolution_adjustment:
-        shutil.rmtree("temp", ignore_errors=True)
+        shutil.rmtree("temp/res_adjustment", ignore_errors=True)
 
     return mosaic, warps, new_transforms
 
@@ -794,10 +794,9 @@ def make_difference_gif(
     titles_list: list[str] = [],
     scale_factor: float = -1.0,
     mosaic_scenes: bool = False,
-    mosaic_offsets_x: list[int] = [],
-    mosaic_offsets_y: list[int] = [],
+    mosaic_offsets_x: int = 0,
+    mosaic_offsets_y: int = 0,
     fps: int = 1,
-    use_overlap: bool = False,
     font_scale: float = 1.5,
     thickness: int = 3,
     color: tuple = (255, 0, 0),
@@ -813,10 +812,8 @@ def make_difference_gif(
         temp_paths = images_list
 
     if len(titles_list) > 0:
-        assert (
-            len(titles_list) == len(images_list)
-            if not mosaic_scenes
-            else len(images_list) - 1
+        assert len(titles_list) == len(
+            images_list
         ), "Length of provided list of titles does not match the number of images."
     else:
         titles_list = [os.path.splitext(os.path.basename(f))[0] for f in images_list]
@@ -824,18 +821,15 @@ def make_difference_gif(
     images = []
     font = cv.FONT_HERSHEY_SIMPLEX
     if mosaic_scenes:
-        ref_scene = temp_paths[0]
-        tgt_scenes = temp_paths[1:]
-        if len(mosaic_offsets_x) == 0:
-            mosaic_offsets_x = [0] * len(tgt_scenes)
-        if len(mosaic_offsets_y) == 0:
-            mosaic_offsets_y = [0] * len(tgt_scenes)
-        for i, p in enumerate(tgt_scenes):
-            img, _, _ = make_mosaic(
-                [ref_scene, p], mosaic_offsets_x[i], mosaic_offsets_y[i]
-            )
+        _, warps, _ = make_mosaic(
+            images_list,
+            mosaic_offsets_x,
+            mosaic_offsets_y,
+            return_warps=True,
+        )
+        for i, warp in enumerate(warps):
             cv.putText(
-                img,
+                warp,
                 titles_list[i],
                 origin,
                 font,
@@ -844,7 +838,7 @@ def make_difference_gif(
                 thickness,
                 cv.LINE_AA,
             )
-            images.append(img)
+            images.append(warp)
     else:
         temp_images = []
         transforms = []
@@ -857,11 +851,7 @@ def make_difference_gif(
                 img = img[:, :, 0]
             temp_images.append(img)
 
-        if use_overlap:
-            temp_images = [temp_images[0]] + shift_targets_to_origin(
-                temp_images[1:], transforms[0], transforms[1:]
-            )
-        for img in temp_images:
+        for i, img in enumerate(temp_images):
             cv.putText(
                 img,
                 titles_list[i],
@@ -1296,20 +1286,20 @@ def co_register(
     targets=Union[
         str, np.ndarray, list[str], list[np.ndarray], list[Union[str, np.ndarray]]
     ],
-    number_of_iterations=10,
-    termination_eps=1e-5,
+    number_of_iterations=30,
+    termination_eps=0.03,
     of_params: dict = dict(
         # params for ShiTomasi corner detection
         feature_params=dict(
-            maxCorners=100,
-            qualityLevel=0.3,
-            minDistance=7,
-            blockSize=7,
+            maxCorners=20000,
+            qualityLevel=0.1,
+            minDistance=10,
+            blockSize=15,
         ),
         # Parameters for lucas kanade optical flow
         lk_params=dict(
-            winSize=(50, 50),
-            maxLevel=2,
+            winSize=(25, 25),
+            maxLevel=1,
         ),
     ),
     output_path: str = "",
@@ -1317,19 +1307,17 @@ def co_register(
     generate_gif: bool = True,
     generate_csv: bool = True,
     fps: int = 3,
-    of_dist_thresh: Union[None, int, float] = 5,  # pixels
+    of_dist_thresh: Union[None, int, float] = 2,  # pixels
     filter_by_ground_res: bool = False,
     ground_resolution: float = 10.0,  # meters
     ground_resolution_limit: float = 10.0,  # meters
-    grey_output: bool = True,
     corr_win_size: tuple = (15, 15),
     corr_thresh: float = 0.75,
-    enhanced_shift_method: str = "",  # empty, "mean" or "corr"
+    enhanced_shift_method: str = "mean",  # empty, "mean" or "corr"
     remove_outlilers: bool = True,
     use_overlap: bool = False,
     rethrow_error: bool = False,
     resampling_resolution: str = "lower",
-    ligh_glue_max_points: int = 1000,
     return_shifted_images: bool = False,
     laplacian_kernel_size: Union[None, int] = None,
     lower_of_dist_thresh: Union[None, int, float] = None,
@@ -1388,16 +1376,25 @@ def co_register(
     if use_overlap:
         tgt_imgs = []
         tgt_origs = []
-        tgt_raws = []
         ref_imgs = []
         for i, tgt in enumerate(targets):
-            tgt_raws.append(flip_img(rasterio.open(tgt).read().copy().astype("uint8")))
+            tgt_origs.append(flip_img(rasterio.open(tgt).read().copy().astype("uint8")))
             _, (_, _, ref_overlap, tgt_overlap) = find_overlap(
                 reference, tgt, True, resampling_resolution=resampling_resolution
             )
-            ref_imgs.append(cv.cvtColor(ref_overlap, cv.COLOR_BGR2GRAY).astype("uint8"))
-            tgt_imgs.append(cv.cvtColor(tgt_overlap, cv.COLOR_BGR2GRAY).astype("uint8"))
-            grey_output = False
+
+            if ref_overlap.shape[2] == 1:
+                ref_overlap = ref_overlap[:, :, 0]
+            else:
+                ref_overlap = cv.cvtColor(ref_overlap, cv.COLOR_BGR2GRAY)
+
+            if tgt_overlap.shape[2] == 1:
+                tgt_overlap = tgt_overlap[:, :, 0]
+            else:
+                tgt_overlap = cv.cvtColor(tgt_overlap, cv.COLOR_BGR2GRAY)
+
+            ref_imgs.append(ref_overlap)
+            tgt_imgs.append(tgt_overlap)
     else:
         if type(reference) == str:
             ref_img = flip_img(ref_raster.read().copy())
@@ -1432,7 +1429,6 @@ def co_register(
                 else:
                     tgt_imgs.append(cv.cvtColor(tgt, cv.COLOR_BGR2GRAY).astype("uint8"))
                 tgt_origs.append(tgt.astype("uint8"))
-        tgt_raws = tgt_origs.copy()
 
     ref_imgs_temp = []
     if laplacian_kernel_size is not None:
@@ -1532,12 +1528,20 @@ def co_register(
                     if remove_outlilers:
                         ref_good_temp = ref_good_temp[inliers.ravel().astype(bool)]
                         tgt_good_temp = tgt_good_temp[inliers.ravel().astype(bool)]
+                    print(
+                        f"For target {i} ({os.path.basename(targets[i])}), array shapes => Ref: {ref_good_temp.shape}, Tgt: {tgt_good_temp.shape}"
+                    )
                     shift_x, shift_y = np.mean(ref_good_temp - tgt_good_temp, axis=0)
 
+            print(
+                f"For target {i} ({os.path.basename(targets[i])}), shifts => x: {shift_x}, y: {shift_y} pixels."
+            )
             shifts.append((shift_x, shift_y))
 
             if shift_x == np.inf:
-                print(f"No valid shifts found.")
+                print(
+                    f"No valid shifts found for target {i} ({os.path.basename(targets[i])})"
+                )
                 tgt_aligned_list.append(np.zeros(0))
                 continue
 
@@ -1545,7 +1549,9 @@ def co_register(
                 (abs(shift_x * ground_resolution) > ground_resolution_limit)
                 or (abs(shift_y * ground_resolution) > ground_resolution_limit)
             ):
-                print(f"Shifts too high for target {i}. Ignoring the scene.")
+                print(
+                    f"Shifts too high for target {i} ({os.path.basename(targets[i])}). Ignoring the scene."
+                )
                 tgt_aligned_list.append(np.zeros(0))
                 continue
 
@@ -1558,42 +1564,34 @@ def co_register(
 
             if export_outputs:
                 profile = tgt_profiles[i]
+                updated_profile = profile.copy()
                 temp_path = os.path.join(temp_dir, f"out_{i}.tiff")
-                if return_shifted_images:
-                    updated_profile = profile.copy()
-                    updated_profile["transform"] = rasterio.Affine(
-                        profile["transform"].a,
-                        profile["transform"].b,
-                        profile["transform"].c + shift_x * profile["transform"].a,
-                        profile["transform"].d,
-                        profile["transform"].e,
-                        profile["transform"].f + shift_y * profile["transform"].e,
-                    )
-                    with rasterio.open(
-                        os.path.join(aligned_output_dir, os.path.basename(targets[i])),
-                        "w",
-                        **updated_profile,
-                    ) as ds:
-                        for j in range(0, updated_profile["count"]):
-                            ds.write(tgt_raws[i][:, :, j], j + 1)
-                processed_output_images.append(temp_path)
+                out_path = os.path.join(
+                    aligned_output_dir, os.path.basename(targets[i])
+                )
+                updated_profile["transform"] = rasterio.Affine(
+                    profile["transform"].a,
+                    profile["transform"].b,
+                    profile["transform"].c + shift_x * profile["transform"].a,
+                    profile["transform"].d,
+                    profile["transform"].e,
+                    profile["transform"].f + shift_y * profile["transform"].e,
+                )
+                with rasterio.open(
+                    out_path if return_shifted_images else temp_path,
+                    "w",
+                    **updated_profile,
+                ) as ds:
+                    for j in range(0, updated_profile["count"]):
+                        ds.write(tgt_origs[i][:, :, j], j + 1)
                 processed_tgt_images.append(targets[i])
-                if grey_output:
-                    warped = tgt_aligned
-                else:
-                    warped = warp_affine_dataset(
-                        tgt_raws[i] if use_overlap else tgt_origs[i],
-                        translation_x=shift_x,
-                        translation_y=shift_y,
-                    )
-                with rasterio.open(temp_path, "w", **profile) as ds:
-                    for j in range(0, profile["count"]):
-                        if grey_output:
-                            ds.write(warped, j + 1)
-                        else:
-                            ds.write(warped[:, :, j], j + 1)
+                processed_output_images.append(
+                    out_path if return_shifted_images else temp_path
+                )
         except Exception as e:
-            print(f"Algorithm did not converge for target {i} for the reason below:")
+            print(
+                f"Algorithm did not converge for target {i} ({os.path.basename(targets[i])}) for the reason below:"
+            )
             if rethrow_error:
                 raise
             else:
@@ -1642,7 +1640,7 @@ def co_register(
             out_gif,
             datasets_titles,
             fps=fps,
-            use_overlap=use_overlap,
+            mosaic_scenes=True,
         )
 
         out_gif = os.path.join(
@@ -1684,7 +1682,7 @@ def co_register(
             out_gif,
             datasets_titles,
             fps=fps,
-            use_overlap=use_overlap,
+            mosaic_scenes=True,
         )
 
         if generate_csv:
@@ -1759,30 +1757,26 @@ def find_landsat_scenes_dict(features: dict) -> dict:
 
         assets = feature["assets"]
 
-        red = ""
-        red_alternate = ""
-        if "red" in assets:
+        acceptance_condition = (
+            ("red" in assets) and ("green" in assets) and ("blue" in assets)
+        )
+
+        if acceptance_condition:
             red = assets["red"]["href"]
             red_alternate = assets["red"]["alternate"]["s3"]["href"]
 
-        green = ""
-        green_alternate = ""
-        if "green" in assets:
             green = assets["green"]["href"]
             green_alternate = assets["green"]["alternate"]["s3"]["href"]
 
-        blue = ""
-        blue_alternate = ""
-        if "blue" in assets:
             blue = assets["blue"]["href"]
             blue_alternate = assets["blue"]["alternate"]["s3"]["href"]
 
-        feat_dict[id] = dict(
-            scene_id=scene_id,
-            red=(red, red_alternate),
-            green=(green, green_alternate),
-            blue=(blue, blue_alternate),
-        )
+            feat_dict[id] = dict(
+                scene_id=scene_id,
+                red=(red, red_alternate),
+                green=(green, green_alternate),
+                blue=(blue, blue_alternate),
+            )
     return feat_dict
 
 
