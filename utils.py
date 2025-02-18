@@ -1526,8 +1526,8 @@ def co_register(
             dist = np.linalg.norm(p1[st == 1] - p0[st == 1], axis=1)
 
             ref_good, tgt_good = filter_features(
-                p0,
-                p1,
+                p0[st == 1],
+                p1[st == 1],
                 ref_img,
                 tgt_img,
                 tgt_img.shape,
@@ -1565,7 +1565,7 @@ def co_register(
                         ref_good_temp = ref_good_temp[inliers.ravel().astype(bool)]
                         tgt_good_temp = tgt_good_temp[inliers.ravel().astype(bool)]
                     print(
-                        f"For target {i} ({os.path.basename(targets[i])}), array shapes => Ref: {ref_good_temp.shape}, Tgt: {tgt_good_temp.shape}"
+                        f"For target {i} ({os.path.basename(targets[i])}), Num features => Ref: {ref_good_temp.shape[0]}, Tgt: {tgt_good_temp.shape[0]}"
                     )
                     shift_x, shift_y = np.mean(ref_good_temp - tgt_good_temp, axis=0)
 
@@ -1574,11 +1574,12 @@ def co_register(
             )
             shifts.append((shift_x, shift_y))
 
+            to_warp = tgt_img if laplacian_kernel_size is None else grey_tgts[i]
             if shift_x == np.inf:
                 print(
                     f"No valid shifts found for target {i} ({os.path.basename(targets[i])})"
                 )
-                tgt_aligned_list.append(np.zeros(0))
+                tgt_aligned_list.append(np.zeros_like(to_warp).astype("uint8"))
                 continue
 
             if (filter_by_ground_res) and (
@@ -1588,11 +1589,11 @@ def co_register(
                 print(
                     f"Shifts too high for target {i} ({os.path.basename(targets[i])}). Ignoring the scene."
                 )
-                tgt_aligned_list.append(np.zeros(0))
+                tgt_aligned_list.append(np.zeros_like(to_warp).astype("uint8"))
                 continue
 
             tgt_aligned = warp_affine_dataset(
-                tgt_img if laplacian_kernel_size is None else grey_tgts[i],
+                to_warp,
                 translation_x=shift_x,
                 translation_y=shift_y,
             )
@@ -1632,7 +1633,7 @@ def co_register(
                 raise
             else:
                 print(e)
-                tgt_aligned_list.append(np.zeros(0))
+                tgt_aligned_list.append(np.zeros_like(to_warp).astype("uint8"))
 
     if generate_gif:
         if laplacian_kernel_size is not None:
