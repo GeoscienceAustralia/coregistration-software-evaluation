@@ -1264,6 +1264,7 @@ def filter_features(
     dists: np.ndarray,
     dist_thresh: Union[None, int, float] = None,
     lower_of_dist_thresh: Union[None, int, float] = None,
+    target_info: Union[None, tuple] = None,
 ) -> tuple:
 
     if dist_thresh != None:
@@ -1299,9 +1300,11 @@ def filter_features(
         valid_idx = np.array(list(set(range(0, len(ref_good))) - invalid_idx))
 
         if len(valid_idx) == 0:
-            warnings.warn(
-                f"WARNING: couldn't find valid features for target or reference."
-            )
+            info_str = ""
+            if target_info is not None:
+                info_str = f"For target {target_info[0]} ({target_info[1]}), "
+            print(info_str + "Couldn't find valid features for target or reference.")
+            return None, None
 
         tgt_good = np.expand_dims(tgt_good[valid_idx], axis=0)
         ref_good = np.expand_dims(ref_good[valid_idx], axis=0)
@@ -1400,8 +1403,8 @@ def co_register(
                 or (not np.all(w_diff == 0))
                 or (not np.all(h_diff == 0))
             ) and (not use_overlap):
-                warnings.warn(
-                    "Origins or shapes of the reference or target images do not match. Consider using the `use_overlap` flag."
+                print(
+                    "WARNING: Origins or shapes of the reference or target images do not match. Consider using the `use_overlap` flag."
                 )
 
     if use_overlap:
@@ -1502,6 +1505,7 @@ def co_register(
     processed_tgt_images = []
     processed_output_images = []
     shifts = []
+    process_ids = []
 
     temp_dir = "temp/outputs"
     os.makedirs(temp_dir, exist_ok=True)
@@ -1534,12 +1538,16 @@ def co_register(
                 dist,
                 of_dist_thresh,
                 lower_of_dist_thresh,
+                (i, os.path.basename(targets[i])),
             )
 
-            if (ref_good.shape[1] < 4) or (tgt_good.shape[1] < 4):
+            if tgt_good is None:
+                continue
+            if tgt_good.shape[1] < 4:
                 print(
-                    f"WARNING: couldn't find enough good features for target or reference. num ref features: {ref_good.shape[0]}, num tgt features = {tgt_good.shape[0]}"
+                    f"""For target {i} ({os.path.basename(targets[i])}), couldn't find enough good features for target or reference. Num features: {tgt_good.shape[0]}"""
                 )
+                continue
             h, inliers = cv.estimateAffine2D(tgt_good, ref_good)
 
             if enhanced_shift_method == "":
@@ -1565,7 +1573,7 @@ def co_register(
                         ref_good_temp = ref_good_temp[inliers.ravel().astype(bool)]
                         tgt_good_temp = tgt_good_temp[inliers.ravel().astype(bool)]
                     print(
-                        f"For target {i} ({os.path.basename(targets[i])}), Num features => Ref: {ref_good_temp.shape[0]}, Tgt: {tgt_good_temp.shape[0]}"
+                        f"For target {i} ({os.path.basename(targets[i])}), Num features: {ref_good_temp.shape[0]}"
                     )
                     shift_x, shift_y = np.mean(ref_good_temp - tgt_good_temp, axis=0)
 
@@ -1579,7 +1587,6 @@ def co_register(
                 print(
                     f"No valid shifts found for target {i} ({os.path.basename(targets[i])})"
                 )
-                tgt_aligned_list.append(np.zeros_like(to_warp).astype("uint8"))
                 continue
 
             if (filter_by_ground_res) and (
@@ -1589,7 +1596,6 @@ def co_register(
                 print(
                     f"Shifts too high for target {i} ({os.path.basename(targets[i])}). Ignoring the scene."
                 )
-                tgt_aligned_list.append(np.zeros_like(to_warp).astype("uint8"))
                 continue
 
             tgt_aligned = warp_affine_dataset(
@@ -1598,6 +1604,7 @@ def co_register(
                 translation_y=shift_y,
             )
             tgt_aligned_list.append(tgt_aligned)
+            process_ids.append(i)
 
             if export_outputs:
                 profile = tgt_profiles[i]
@@ -1633,17 +1640,24 @@ def co_register(
                 raise
             else:
                 print(e)
-                tgt_aligned_list.append(np.zeros_like(to_warp).astype("uint8"))
 
     if generate_gif:
         if laplacian_kernel_size is not None:
-            ref_img = grey_ref
-            ref_imgs = grey_refs
+            if use_overlap:
+                ref_imgs = grey_refs
+            else:
+                ref_img = grey_ref
+            tgt_imgs = grey_tgts
+
+        if use_overlap:
+            ref_imgs = [ref_imgs[id] for id in process_ids]
+            tgt_imgs = [tgt_imgs[id] for id in process_ids]
+
         out_gif = os.path.join(
             output_path,
             f'of{"" if enhanced_shift_method == "" else "_" + enhanced_shift_method}.gif',
         )
-        target_titles = [f"target_{id}" for id in range(len(tgt_aligned_list))]
+        target_titles = [f"target_{id}" for id in process_ids]
 
         if os.path.isfile(out_gif):
             os.remove(out_gif)
@@ -1651,19 +1665,19 @@ def co_register(
         ssims_aligned = [
             np.round(
                 ssim(
-                    ref_imgs[id] if use_overlap else ref_img,
-                    tgt_aligned_list[id],
+                    ref_imgs[k] if use_overlap else ref_img,
+                    tgt_aligned_list[k],
                     win_size=3,
                 ),
                 3,
             )
-            for id in range(len(tgt_aligned_list))
+            for k in range(len(tgt_aligned_list))
         ]
         mse_aligned = [
             np.round(
-                mse(ref_imgs[id] if use_overlap else ref_img, tgt_aligned_list[id]), 3
+                mse(ref_imgs[k] if use_overlap else ref_img, tgt_aligned_list[k]), 3
             )
-            for id in range(len(tgt_aligned_list))
+            for k in range(len(tgt_aligned_list))
         ]
         datasets_titles = ["Reference"] + [
             f"{target_title}, ssim:{ssim_score}, mse:{mse_score}"
@@ -1690,23 +1704,23 @@ def co_register(
         ssims_raw = [
             np.round(
                 ssim(
-                    ref_imgs[id] if use_overlap else ref_img,
-                    tgt_imgs[id] if laplacian_kernel_size is None else grey_tgts[id],
+                    ref_imgs[k] if use_overlap else ref_img,
+                    tgt_imgs[k] if laplacian_kernel_size is None else grey_tgts[k],
                     win_size=3,
                 ),
                 3,
             )
-            for id in range(len(tgt_aligned_list))
+            for k in range(len(tgt_aligned_list))
         ]
         mse_raw = [
             np.round(
                 mse(
-                    ref_imgs[id] if use_overlap else ref_img,
-                    tgt_imgs[id] if laplacian_kernel_size is None else grey_tgts[id],
+                    ref_imgs[k] if use_overlap else ref_img,
+                    tgt_imgs[k] if laplacian_kernel_size is None else grey_tgts[k],
                 ),
                 3,
             )
-            for id in range(len(tgt_aligned_list))
+            for k in range(len(tgt_aligned_list))
         ]
         datasets_titles = ["Reference"] + [
             f"{target_title}, ssim:{ssim_score}, mse:{mse_score}"
