@@ -7,6 +7,7 @@ __pycache__/*
 *.gif
 *.tif
 *.xml
+*.kml
 tools/temp/*
 tools/test*
 landsat-env/*

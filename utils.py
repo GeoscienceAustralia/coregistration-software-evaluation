@@ -1037,8 +1037,17 @@ def resize_bbox(bbox, scale_factor=1.0):
 UTM = namedtuple("UTM", ["x", "y"])
 LLA = namedtuple("LLA", ["lat", "lon"])
 
+UTM3 = namedtuple("UTM3", ["x", "y", "z"])
+LLA3 = namedtuple("LLA3", ["lat", "lon", "alt"])
 
-def UTMtoLLA(utm: UTM, crs: dict):
+UTM3to2 = lambda utm3: UTM(utm3.x, utm3.y)
+LLA3to2 = lambda lla3: LLA(lla3.lat, lla3.lon)
+
+UTM2to3 = lambda utm: UTM3(utm.x, utm.y, 0.0)
+LLA2to3 = lambda lla: LLA3(lla.lat, lla.lon, 0.0)
+
+
+def UTMtoLLA(utm: Union[UTM, UTM3], crs: dict):
     """
     `UMT(x, y)`
 
@@ -1056,10 +1065,13 @@ def UTMtoLLA(utm: UTM, crs: dict):
     """
     proj = Proj(**crs)
     lla = proj(utm.x, utm.y, inverse=True)
-    return LLA(lla[1], lla[0])
+    if type(utm) == UTM3:
+        return LLA3(lla[1], lla[0], utm.z)
+    else:
+        return LLA(lla[1], lla[0])
 
 
-def LLAtoUTM(lla: LLA, crs: dict):
+def LLAtoUTM(lla: Union[LLA, LLA3], crs: Union[dict, None]):
     """
     `LLA(lat, lon)`
 
@@ -1078,10 +1090,15 @@ def LLAtoUTM(lla: LLA, crs: dict):
     proj = Proj(**crs)
     if crs["proj"] != "utm":
         e, n, _, _ = utm_convrter.from_latlon(lla.lat, lla.lon)
-        return UTM(float(e), float(n))
+        output = (float(e), float(n))
     else:
         utm = proj(lla.lon, lla.lat)
-        return UTM(utm[0], utm[1])
+        output = (utm[0], utm[1])
+
+    if type(lla) == LLA3:
+        return UTM3(*output, lla.alt)
+    else:
+        return UTM(*output)
 
 
 def utm_bounds(bounds: BoundingBox, crs: dict, skip_stereo: bool = True) -> BoundingBox:
@@ -1922,41 +1939,52 @@ def tracking_image(
     return track_img, ref_copy, tgt_copy
 
 
-PointXYZ = namedtuple("PointXYZ", ["x", "y", "z"])
-PointLLA = namedtuple("PointLLA", ["lat", "lon", "alt"])
-
-
 def read_kml_polygon(
-    kml_path: str, is_lat_lon: bool = True, is_kml_str: bool = False
+    kml_path: str,
+    is_lat_lon: bool = True,
+    is_kml_str: bool = False,
+    read_mode: str = "poly",
 ) -> tuple:
+    """
+    `read_mode` could be `poly` or `point`
+    """
 
+    assert read_mode in ["poly", "point"], "read_mode` could be `poly` or `point"
     if is_kml_str:
         os.makedirs("temp_kml_dir", exist_ok=True)
         with open("temp_kml_dir/temp_kml.kml", "w") as f:
             f.write(kml_path)
         kml_path = "temp_kml_dir/temp_kml.kml"
     with open(kml_path) as f:
-        doc = parser.parse(f).getroot().Document.Placemark
+        if read_mode == "poly":
+            doc = parser.parse(f).getroot().Document.Placemark
+        else:
+            doc = parser.parse(f).getroot().Folder.Placemark
     shutil.rmtree("temp_kml_dir", ignore_errors=True)
 
     coords = []
     for pm in doc:
-        coord = pm.Polygon.outerBoundaryIs.LinearRing.coordinates.text.strip()
+        if read_mode == "poly":
+            coord = pm.Polygon.outerBoundaryIs.LinearRing.coordinates.text.strip()
+        else:
+            coord = pm.Point.coordinates.text.strip()
         coord_list = coord.split(" ")
         for c in coord_list:
             c_splits = c.split(",")
+            if any(el == "" for el in c_splits):
+                continue
             c_nums = [float(i) for i in c_splits]
             if len(c_nums) == 2:
                 c_nums.append(0.0)
             if is_lat_lon:
-                coords.append(PointLLA(c_nums[0], c_nums[1], c_nums[2]))
+                coords.append(LLA3(c_nums[1], c_nums[0], c_nums[2]))
             else:
-                coords.append(PointXYZ(c_nums[0], c_nums[1], c_nums[2]))
+                coords.append(UTM3(c_nums[0], c_nums[1], c_nums[2]))
 
     if is_lat_lon:
         lats = [p.lat for p in coords]
         lons = [p.lon for p in coords]
-        bbox = BoundingBox(min(lats), min(lons), max(lats), max(lons))
+        bbox = BoundingBox(min(lons), min(lats), max(lons), max(lats))
     else:
         xs = [p.x for p in coords]
         ys = [p.y for p in coords]
