@@ -1766,11 +1766,13 @@ def apply_gamma(data, gamma=0.5, stretch_hist: bool = False, adjust_hist: bool =
     return data
 
 
-def fetch_landsat_stac_server(query):
+def query_stac_server(query: dict, server_url: str):
     """
     Queries the stac-server (STAC) backend.
     This function handles pagination.
     query is a python dictionary to pass as json to the request.
+
+    server_url example: https://landsatlook.usgs.gov/stac-server/search
     """
     headers = {
         "Content-Type": "application/json",
@@ -1778,8 +1780,7 @@ def fetch_landsat_stac_server(query):
         "Accept": "application/geo+json",
     }
 
-    url = f"https://landsatlook.usgs.gov/stac-server/search"
-    data = requests.post(url, headers=headers, json=query).json()
+    data = requests.post(server_url, headers=headers, json=query).json()
     error = data.get("message", "")
     if error:
         raise Exception(f"STAC-Server failed and returned: {error}")
@@ -1794,7 +1795,7 @@ def fetch_landsat_stac_server(query):
         query["page"] += 1
         query["limit"] = context["limit"]
 
-        features = list(itertools.chain(features, fetch_landsat_stac_server(query)))
+        features = list(itertools.chain(features, query_stac_server(query, server_url)))
 
     return features
 
