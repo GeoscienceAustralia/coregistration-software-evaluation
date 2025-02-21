@@ -364,6 +364,7 @@ def downsample_dataset(
     output_file: str = "",
     enhance_function=None,
     force_shape: tuple = (),  # (height, width)
+    readjust_origin: bool = False,
 ):
     """
     Downsamples the output data and returns the new downsampled data and its new affine transformation according to `scale_factor`
@@ -401,7 +402,9 @@ def downsample_dataset(
                 force_shape[0] / scale_factor[0],
                 force_shape[1] / scale_factor[1],
             ]
-        # transform = readjust_origin_for_new_pixel_size(transform, *scale_factor)
+
+        if readjust_origin:
+            transform = readjust_origin_for_new_pixel_size(transform, *scale_factor)
 
         profile = dataset.profile
         profile.update(
@@ -2003,3 +2006,36 @@ def stream_scene_from_aws(geotiff_file, aws_session, metadata_only: bool = False
             if not metadata_only:
                 scene = geo_fp.read()
     return scene, {"profile": profile, "bounds": bounds, "crs": crs}
+
+
+def hillshade(
+    array: np.ndarray,
+    azimuth: float = 30.0,
+    angle_altitude: float = 30.0,
+    skip_negative: bool = True,
+) -> np.ndarray:
+
+    assert (
+        azimuth <= 360.0
+    ), "Azimuth angle should be lass than or equal to 360 degrees."
+    assert (
+        angle_altitude <= 90.0
+    ), "Altitude angle should be lass than or equal to 90 degrees."
+
+    if skip_negative:
+        array[array < 0] = np.nan
+
+    azimuth = 360.0 - azimuth
+    azi_rad = azimuth * np.pi / 180.0  # azimuth in radians
+
+    alt_rad = angle_altitude * np.pi / 180.0  # altitude in radians
+
+    x, y = np.gradient(array)
+    slope = np.pi / 2.0 - np.arctan(np.sqrt(x * x + y * y))
+    aspect = np.arctan2(-x, y)
+
+    shaded = np.sin(alt_rad) * np.sin(slope) + np.cos(alt_rad) * np.cos(slope) * np.cos(
+        (azi_rad - np.pi / 2.0) - aspect
+    )
+
+    return 255 * (shaded + 1) / 2
