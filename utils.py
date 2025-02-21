@@ -649,17 +649,14 @@ def find_overlap(
         mosaic_overlap = mosaic[
             overlap_in_mosaic.top : overlap_in_mosaic.bottom,
             overlap_in_mosaic.left : overlap_in_mosaic.right,
-            :,
         ]
         raster_overlap_1 = warps[0][
             overlap_in_mosaic.top : overlap_in_mosaic.bottom,
             overlap_in_mosaic.left : overlap_in_mosaic.right,
-            :,
         ]
         raster_overlap_2 = warps[1][
             overlap_in_mosaic.top : overlap_in_mosaic.bottom,
             overlap_in_mosaic.left : overlap_in_mosaic.right,
-            :,
         ]
 
     shutil.rmtree("temp", ignore_errors=True)
@@ -1106,6 +1103,9 @@ def LLAtoUTM(lla: Union[LLA, LLA3], crs: Union[dict, None]):
 
 def utm_bounds(bounds: BoundingBox, crs: dict, skip_stereo: bool = True) -> BoundingBox:
     has_negative = any(b < 0 for b in bounds)
+    if crs == {}:
+        print("No CRS data found. Returning original.")
+        return bounds
     if (crs["proj"] == "stere") and (skip_stereo):
         return bounds
     if (crs["proj"] == "stere") or (
