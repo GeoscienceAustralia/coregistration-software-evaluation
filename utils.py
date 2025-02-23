@@ -506,7 +506,7 @@ def adjust_resolutions(
     dataset_paths: list[str],
     output_paths: list[str],
     resampling_resolution: str = "lower",
-):
+) -> tuple:
     """
     Adjusts the resolutions for two or more datasets with different ones. Rounding errors might cause a slightly different output resolutions.
     """
@@ -540,7 +540,7 @@ def adjust_resolutions(
     for i, ds in enumerate(dataset_paths):
         transforms.append(downsample_dataset(ds, scale_factors[i], output_paths[i])[1])
 
-    return [[abs(t.a), abs(t.e), t] for t in transforms]
+    return [[abs(t.a), abs(t.e), t] for t in transforms], scale_factors
 
 
 def find_overlap(
@@ -549,7 +549,7 @@ def find_overlap(
     return_images: bool = False,
     return_pixels: bool = False,
     resampling_resolution: str = "lower",
-):
+) -> tuple:
     """
     Crude overlap finder for two overlapping scenes. (finds the bounding box around the overlapping area.
     A better way is to straighten the images and then find the overlap and then revert the transform.)
@@ -586,11 +586,14 @@ def find_overlap(
             dataset_1 = "temp/scaled_raster_1.tif"
             dataset_2 = "temp/scaled_raster_2.tif"
 
-            (raster_1_px_size, raster_1_py_size, _), (
-                raster_2_px_size,
-                raster_2_py_size,
-                _,
-            ) = outputs
+            (
+                (raster_1_px_size, raster_1_py_size, _),
+                (
+                    raster_2_px_size,
+                    raster_2_py_size,
+                    _,
+                ),
+            ), scale_factors = outputs
 
         min_left = min(
             bounds_1.left // raster_1_px_size, bounds_2.left // raster_2_px_size
@@ -661,11 +664,15 @@ def find_overlap(
 
     shutil.rmtree("temp", ignore_errors=True)
 
-    return overlap_in_mosaic, (
-        mosaic,
-        mosaic_overlap,
-        raster_overlap_1,
-        raster_overlap_2,
+    return (
+        overlap_in_mosaic,
+        (
+            mosaic,
+            mosaic_overlap,
+            raster_overlap_1,
+            raster_overlap_2,
+        ),
+        scale_factors,
     )
 
 
@@ -1431,25 +1438,31 @@ def co_register(
         tgt_imgs = []
         tgt_origs = []
         ref_imgs = []
+        scale_factors = []
         for i, tgt in enumerate(targets):
             tgt_origs.append(flip_img(rasterio.open(tgt).read().copy().astype("uint8")))
-            _, (_, _, ref_overlap, tgt_overlap) = find_overlap(
+            _, (_, _, ref_overlap, tgt_overlap), scale_facrtors_temp = find_overlap(
                 reference, tgt, True, resampling_resolution=resampling_resolution
             )
 
-            if ref_overlap.shape[2] == 1:
-                ref_overlap = ref_overlap[:, :, 0]
-            else:
-                ref_overlap = cv.cvtColor(ref_overlap, cv.COLOR_BGR2GRAY)
+            scale_factors.append(scale_facrtors_temp[1])
 
-            if tgt_overlap.shape[2] == 1:
-                tgt_overlap = tgt_overlap[:, :, 0]
-            else:
-                tgt_overlap = cv.cvtColor(tgt_overlap, cv.COLOR_BGR2GRAY)
+            if len(ref_overlap.shape) > 2:
+                if ref_overlap.shape[2] == 1:
+                    ref_overlap = ref_overlap[:, :, 0]
+                else:
+                    ref_overlap = cv.cvtColor(ref_overlap, cv.COLOR_BGR2GRAY)
+
+            if len(tgt_overlap.shape) > 2:
+                if tgt_overlap.shape[2] == 1:
+                    tgt_overlap = tgt_overlap[:, :, 0]
+                else:
+                    tgt_overlap = cv.cvtColor(tgt_overlap, cv.COLOR_BGR2GRAY)
 
             ref_imgs.append(ref_overlap)
             tgt_imgs.append(tgt_overlap)
     else:
+        scale_factors = [1.0] * len(targets)
         if type(reference) == str:
             ref_img = flip_img(ref_raster.read().copy())
             ref_img = (
@@ -1598,9 +1611,11 @@ def co_register(
                     shift_x, shift_y = np.mean(ref_good_temp - tgt_good_temp, axis=0)
 
             print(
-                f"For target {i} ({os.path.basename(targets[i])}), shifts => x: {shift_x}, y: {shift_y} pixels."
+                f"For target {i} ({os.path.basename(targets[i])}), shifts => x: {shift_x / scale_factors[i][1]}, y: {shift_y / scale_factors[i][0]} pixels."
             )
-            shifts.append((shift_x, shift_y))
+            shifts.append(
+                (shift_x / scale_factors[i][1], shift_y / scale_factors[i][0])
+            )
 
             to_warp = tgt_img if laplacian_kernel_size is None else grey_tgts[i]
             if shift_x == np.inf:
@@ -1636,10 +1651,12 @@ def co_register(
                 updated_profile["transform"] = rasterio.Affine(
                     profile["transform"].a,
                     profile["transform"].b,
-                    profile["transform"].c + shift_x * profile["transform"].a,
+                    profile["transform"].c
+                    + (shift_x / scale_factors[i][1]) * profile["transform"].a,
                     profile["transform"].d,
                     profile["transform"].e,
-                    profile["transform"].f + shift_y * profile["transform"].e,
+                    profile["transform"].f
+                    + (shift_y / scale_factors[i][0]) * profile["transform"].e,
                 )
                 with rasterio.open(
                     out_path if return_shifted_images else temp_path,
