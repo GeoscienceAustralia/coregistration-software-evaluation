@@ -711,29 +711,33 @@ def make_mosaic(
     for p in dataset_paths:
         raster = rasterio.open(p)
         transform = raster.transform
-        ps_x.append(abs(round(transform.a)))
-        ps_y.append(abs(round(transform.e)))
+        ps_x.append(abs(transform.a))
+        ps_y.append(abs(transform.e))
         rasters.append(raster)
         transforms.append(transform)
         crs = raster.crs.data
         crss.append(crs)
         boundss.append(utm_bounds(raster.bounds, crs))
 
-    ps_x_condition = all(ps == ps_x[0] for ps in ps_x)
-    ps_y_conditoin = all(ps == ps_y[0] for ps in ps_y)
-    assert (
-        ps_x_condition and ps_y_conditoin
-    ), "Ground resolutions are different for datasets. Please use `resolution_adjustment` flag first to fix the issue."
+    selected_res_x = max(ps_x) if resampling_resolution == "lower" else min(ps_x)
+    selected_res_y = max(ps_y) if resampling_resolution == "lower" else min(ps_y)
+    ps_x_condition = all(round(ps) == round(ps_x[0]) for ps in ps_x)
+    ps_y_condition = all(round(ps) == round(ps_y[0]) for ps in ps_y)
+    if not (ps_x_condition and ps_y_condition):
+        print(
+            """Ground resolutions are different for datasets. The mosaicing process might fail if adding large datasets.
+              Please use `resolution_adjustment` flag first if you encounter memory related issues."""
+        )
 
     lefts = []
     rights = []
     tops = []
     bottoms = []
-    for bounds in boundss:
-        lefts.append(abs(bounds.left // transform.a))
-        rights.append(abs(bounds.right // transform.a))
-        tops.append(abs(bounds.top // transform.e))
-        bottoms.append(abs(bounds.bottom // transform.e))
+    for i, bounds in enumerate(boundss):
+        lefts.append(bounds.left)
+        rights.append(bounds.right)
+        tops.append(bounds.top)
+        bottoms.append(bounds.bottom)
 
     min_left = min(lefts)
     min_bottom = min(bottoms)
@@ -741,8 +745,8 @@ def make_mosaic(
     max_top = max(tops)
 
     new_shape = (
-        int(max_top - min_bottom) + offset_y,
-        int(max_right - min_left) + offset_x,
+        int((max_top - min_bottom) / selected_res_y) + offset_y,
+        int((max_right - min_left) / selected_res_x) + offset_x,
     )
 
     new_transforms = []
@@ -752,8 +756,16 @@ def make_mosaic(
         new_transforms.append(
             np.array(
                 [
-                    [1.0, abs(t.b // t.e), orig_x // t.a - min_left],
-                    [t.d // t.a, 1.0, max_top - abs(orig_y // t.e)],
+                    [
+                        t.a / selected_res_x,
+                        abs(t.b / t.e),
+                        (orig_x - min_left) / selected_res_x,
+                    ],
+                    [
+                        t.d / t.a,
+                        abs(t.e / selected_res_y),
+                        (max_top - orig_y) / selected_res_y,
+                    ],
                 ]
             )
         )
@@ -762,7 +774,9 @@ def make_mosaic(
     warps = []
     for i, rs in enumerate(rasters):
         img = flip_img(rs.read())
-        imgw = cv.warpAffine(img, new_transforms[i], (new_shape[1], new_shape[0]))
+        imgw = cv.warpAffine(
+            img, new_transforms[i], (new_shape[1], new_shape[0]), flags=cv.INTER_LINEAR
+        )
 
         if len(imgw.shape) == 2:
             idx = np.where(imgw != 0)
