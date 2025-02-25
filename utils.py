@@ -595,25 +595,26 @@ def find_overlap(
                 ),
             ), scale_factors = outputs
 
-        min_left = min(
-            bounds_1.left // raster_1_px_size, bounds_2.left // raster_2_px_size
-        )
-        max_top = max(
-            bounds_1.top // raster_1_py_size, bounds_2.top // raster_2_py_size
-        )
+        min_left = min(bounds_1.left, bounds_2.left)
+        max_top = max(bounds_1.top, bounds_2.top)
+
+        res_x = [raster_1_px_size, raster_2_px_size]
+        res_y = [raster_1_py_size, raster_2_py_size]
+        selected_res_x = max(res_x) if resampling_resolution == "lower" else min(res_x)
+        selected_res_y = max(res_y) if resampling_resolution == "lower" else min(res_y)
 
         bounds_1 = rasterio.coords.BoundingBox(
-            int(bounds_1.left // raster_1_px_size - min_left),
-            int(max_top - bounds_1.bottom // raster_1_py_size),
-            int(bounds_1.right // raster_1_px_size - min_left),
-            int(max_top - bounds_1.top // raster_1_py_size),
+            int((bounds_1.left - min_left) / selected_res_x),
+            int((max_top - bounds_1.bottom) / selected_res_y),
+            int((bounds_1.right - min_left) / selected_res_x),
+            int((max_top - bounds_1.top) / selected_res_y),
         )
 
         bounds_2 = rasterio.coords.BoundingBox(
-            int(bounds_2.left // raster_2_px_size - min_left),
-            int(max_top - bounds_2.bottom // raster_2_py_size),
-            int(bounds_2.right // raster_2_px_size - min_left),
-            int(max_top - bounds_2.top // raster_2_py_size),
+            int((bounds_2.left - min_left) / selected_res_x),
+            int((max_top - bounds_2.bottom) / selected_res_y),
+            int((bounds_2.right - min_left) / selected_res_x),
+            int((max_top - bounds_2.top) / selected_res_y),
         )
 
     overlap_left = max(bounds_1.left, bounds_2.left)
