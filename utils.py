@@ -1693,7 +1693,7 @@ def co_register(
             else:
                 print(e)
 
-    if generate_gif:
+    if export_outputs:
         if laplacian_kernel_size is not None:
             if use_overlap:
                 ref_imgs = grey_refs
@@ -1738,13 +1738,14 @@ def co_register(
             )
         ]
 
-        make_difference_gif(
-            datasets_paths,
-            out_gif,
-            datasets_titles,
-            fps=fps,
-            mosaic_scenes=True,
-        )
+        if generate_gif:
+            make_difference_gif(
+                datasets_paths,
+                out_gif,
+                datasets_titles,
+                fps=fps,
+                mosaic_scenes=True,
+            )
 
         out_gif = os.path.join(
             output_path,
@@ -1780,13 +1781,15 @@ def co_register(
                 target_titles, ssims_raw, mse_raw
             )
         ]
-        make_difference_gif(
-            datasets_paths,
-            out_gif,
-            datasets_titles,
-            fps=fps,
-            mosaic_scenes=True,
-        )
+
+        if generate_gif:
+            make_difference_gif(
+                datasets_paths,
+                out_gif,
+                datasets_titles,
+                fps=fps,
+                mosaic_scenes=True,
+            )
 
         if generate_csv:
             out_ssim = os.path.join(
