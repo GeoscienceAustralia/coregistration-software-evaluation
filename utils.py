@@ -1855,8 +1855,9 @@ def query_stac_server(query: dict, server_url: str):
     return features
 
 
-def find_landsat_scenes_dict(features: dict) -> dict:
-    feat_dict = dict()
+def find_landsat_scenes_dict(features: dict, one_per_month: bool = True) -> dict:
+    scene_list = []
+    scene_dict = dict()
     for feature in features:
         id = feature["id"]
 
@@ -1878,13 +1879,44 @@ def find_landsat_scenes_dict(features: dict) -> dict:
             blue = assets["blue"]["href"]
             blue_alternate = assets["blue"]["alternate"]["s3"]["href"]
 
-            feat_dict[id] = dict(
+            scene_dict[id] = dict(
                 scene_id=scene_id,
                 red=(red, red_alternate),
                 green=(green, green_alternate),
                 blue=(blue, blue_alternate),
             )
-    return feat_dict
+
+    path_rows = [k.split("_")[2] for k in scene_dict]
+    scene_dict_pr = {}
+    for pr in path_rows:
+        temp_dict = {}
+        required_keys = [k for k in scene_dict if pr in k]
+        for k in required_keys:
+            temp_dict[k] = scene_dict[k]
+        scene_dict_pr[pr] = temp_dict
+
+    scene_dict_pr_time = {}
+    for pr in scene_dict_pr:
+        se = pd.Series(list(scene_dict_pr[pr].keys())).astype("str")
+        g = [s.split("_")[3][0:6] for s in list(scene_dict_pr[pr].keys())]
+        groups = list(se.groupby(g))
+        temp_dict_time = {}
+        for i, t in enumerate([el[0] for el in groups]):
+            temp_list = []
+            if one_per_month:
+                temp_dict = scene_dict_pr[pr][groups[i][1].iloc[0]]
+                temp_dict["scene_name"] = groups[i][1].iloc[0]
+                temp_list.append(temp_dict)
+            else:
+                for k in list(groups[i][1]):
+                    temp_dict = scene_dict_pr[pr][k]
+                    temp_dict["scene_name"] = k
+                    temp_list.append(temp_dict)
+            scene_list.extend(temp_list)
+            temp_dict_time[t] = temp_list
+        scene_dict_pr_time[pr] = temp_dict_time
+
+    return scene_dict_pr_time, scene_list
 
 
 def get_landsat_search_query(
