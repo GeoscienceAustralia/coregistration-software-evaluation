@@ -563,6 +563,7 @@ def find_overlap(
     if return_images:
         return_pixels = True
 
+    scale_factors = [[1.0, 1.0]] * 2
     if return_pixels:
         raster_1_px_size = abs(raster_1.profile["transform"].a)
         raster_1_py_size = abs(raster_1.profile["transform"].e)
@@ -1477,7 +1478,7 @@ def co_register(
             ref_imgs.append(ref_overlap)
             tgt_imgs.append(tgt_overlap)
     else:
-        scale_factors = [1.0] * len(targets)
+        scale_factors = [[1.0, 1.0]] * len(targets)
         if type(reference) == str:
             ref_img = flip_img(ref_raster.read().copy())
             ref_img = (
