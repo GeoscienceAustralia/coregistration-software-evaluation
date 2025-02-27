@@ -685,6 +685,7 @@ def make_mosaic(
     return_warps: bool = False,
     resolution_adjustment: bool = False,
     resampling_resolution: str = "lower",
+    mosaic_output_path: str = "",
 ):
     """
     Creates a mosaic of overlapping scenes. Offsets will be added to the size of the final mosaic if specified.
@@ -797,6 +798,18 @@ def make_mosaic(
 
     if resolution_adjustment:
         shutil.rmtree("temp/res_adjustment", ignore_errors=True)
+
+    if mosaic_output_path != "":
+        print("Writing mosaic file.")
+        mosaic_profile = rasterio.open(dataset_paths[0]).profile
+        mosaic_profile["height"] = new_shape[0]
+        mosaic_profile["width"] = new_shape[1]
+        mosaic_profile["transform"] = rasterio.Affine(
+            selected_res_x, 0.0, min_left, 0.0, -selected_res_y, max_top
+        )
+        with rasterio.open(mosaic_output_path, "w", **mosaic_profile) as ds:
+            for i in range(0, 3):
+                ds.write(mosaic[:, :, i], i + 1)
 
     return mosaic, warps, new_transforms
 
