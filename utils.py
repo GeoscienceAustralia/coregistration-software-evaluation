@@ -1869,7 +1869,9 @@ def query_stac_server(query: dict, server_url: str):
     return features
 
 
-def find_landsat_scenes_dict(features: dict, one_per_month: bool = True) -> dict:
+def find_landsat_scenes_dict(
+    features: dict, one_per_month: bool = True, start_end_years: list[int] = []
+) -> dict:
     scene_list = []
     scene_dict = dict()
     for feature in features:
@@ -1913,6 +1915,14 @@ def find_landsat_scenes_dict(features: dict, one_per_month: bool = True) -> dict
     for pr in scene_dict_pr:
         se = pd.Series(list(scene_dict_pr[pr].keys())).astype("str")
         g = [s.split("_")[3][0:6] for s in list(scene_dict_pr[pr].keys())]
+        if len(start_end_years) != 0:
+            years = [int(s.split("_")[3][0:4]) for s in list(scene_dict_pr[pr].keys())]
+            year_range = range(start_end_years[0], start_end_years[1] + 1)
+            valid_idx = list(
+                filter(lambda i: years[i] in year_range, range(len(years)))
+            )
+            g = [g[i] for i in range(len(g)) if i in valid_idx]
+            se = se.iloc[valid_idx]
         groups = list(se.groupby(g))
         temp_dict_time = {}
         for i, t in enumerate([el[0] for el in groups]):
@@ -1936,6 +1946,7 @@ def find_landsat_scenes_dict(features: dict, one_per_month: bool = True) -> dict
 def get_landsat_search_query(
     bbox: Union[list, BoundingBox],
     collections: list[str] = ["landsat-c2l2-sr", "landsat-c2l2-st"],
+    collection_category: list[str] = ["T1", "T2", "RT"],
     platform: str = "LANDSAT_8",
     start_date: str = "2014-10-30T00:00:00",
     end_date: str = "2015-01-23T23:59:59",
@@ -1945,16 +1956,21 @@ def get_landsat_search_query(
         bbox = [bbox.left, bbox.bottom, bbox.right, bbox.top]
     query = {
         "bbox": bbox,
-        "collections": collections,
         "query": {
-            "eo:cloud_cover": {"lte": cloud_cover},
             "platform": {"in": [platform]},
-            "landsat:collection_category": {"in": ["T1", "T2", "RT"]},
         },
-        "datetime": f"{start_date}.000Z/{end_date}.999Z",
         "page": 1,
         "limit": 100,
     }
+    if len(collections) != 0:
+        query["collections"] = collections
+    if len(collection_category) != 0:
+        query["query"]["landsat:collection_category"] = {"in": collection_category}
+    if (start_date != "") and (end_date != ""):
+        query["datetime"] = f"{start_date}.000Z/{end_date}.999Z"
+    if cloud_cover != -1:
+        query["query"]["eo:cloud_cover"] = {"lte": cloud_cover}
+
     return query
 
 
