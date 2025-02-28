@@ -1399,6 +1399,7 @@ def co_register(
     return_shifted_images: bool = False,
     laplacian_kernel_size: Union[None, int] = None,
     lower_of_dist_thresh: Union[None, int, float] = None,
+    band_number: Union[None, int] = None,
 ) -> tuple:
 
     ORIGIN_DIST_THRESHOLD = 1
@@ -1469,13 +1470,19 @@ def co_register(
                 if ref_overlap.shape[2] == 1:
                     ref_overlap = ref_overlap[:, :, 0]
                 else:
-                    ref_overlap = cv.cvtColor(ref_overlap, cv.COLOR_BGR2GRAY)
+                    if band_number is not None:
+                        ref_overlap = ref_overlap[:, :, band_number]
+                    else:
+                        ref_overlap = cv.cvtColor(ref_overlap, cv.COLOR_BGR2GRAY)
 
             if len(tgt_overlap.shape) > 2:
                 if tgt_overlap.shape[2] == 1:
                     tgt_overlap = tgt_overlap[:, :, 0]
                 else:
-                    tgt_overlap = cv.cvtColor(tgt_overlap, cv.COLOR_BGR2GRAY)
+                    if band_number is not None:
+                        tgt_overlap = tgt_overlap[:, :, band_number]
+                    else:
+                        tgt_overlap = cv.cvtColor(tgt_overlap, cv.COLOR_BGR2GRAY)
 
             ref_imgs.append(ref_overlap)
             tgt_imgs.append(tgt_overlap)
@@ -1483,16 +1490,21 @@ def co_register(
         scale_factors = [[1.0, 1.0]] * len(targets)
         if type(reference) == str:
             ref_img = flip_img(ref_raster.read().copy())
-            ref_img = (
-                cv.cvtColor(ref_img, cv.COLOR_BGR2GRAY)
-                if ref_img.shape[2] != 1
-                else ref_img[:, :, 0]
-            )
+            if ref_img.shape[2] == 1:
+                ref_img = ref_img[:, :, 0]
+            else:
+                if band_number is not None:
+                    ref_img = ref_img[:, :, band_number]
+                else:
+                    ref_img = cv.cvtColor(ref_img, cv.COLOR_BGR2GRAY)
         else:
             if len(reference.shape) == 2:
                 ref_img = reference
             else:
-                ref_img = cv.cvtColor(reference, cv.COLOR_BGR2GRAY)
+                if band_number is not None:
+                    ref_img = ref_img[:, :, band_number]
+                else:
+                    ref_img = cv.cvtColor(reference, cv.COLOR_BGR2GRAY)
         ref_img = ref_img.astype("uint8")
 
         tgt_imgs = []
@@ -1502,11 +1514,13 @@ def co_register(
                 tgt_raster = rasterio.open(tgt)
                 img = flip_img(tgt_raster.read().copy())
                 tgt_origs.append(img.astype("uint8"))
-                img = (
-                    cv.cvtColor(img, cv.COLOR_BGR2GRAY)
-                    if img.shape[2] != 1
-                    else img[:, :, 0]
-                )
+                if img.shape[2] == 1:
+                    img = img[:, :, 0]
+                else:
+                    if band_number is not None:
+                        img = img[:, :, band_number]
+                    else:
+                        img = cv.cvtColor(img, cv.COLOR_BGR2GRAY)
                 tgt_imgs.append(img.astype("uint8"))
             else:
                 if len(tgt.shape) == 2:
