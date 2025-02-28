@@ -1252,34 +1252,28 @@ def find_cells(img, points, window_size, invert_points=False):
 
 
 def find_corrs_shifts(
-    ref_img,
-    tgt_img,
-    ref_points,
-    tgt_points,
-    inliers=[],
-    corr_win_size=(15, 15),
-    corr_thresh=0.75,
-    drop_unbound=True,
-    invert_points=True,
-):
-    ref_points = ref_points[0, :, :].astype("int")
-    tgt_points = tgt_points[0, :, :].astype("int")
-    if len(inliers) != 0:
-        ref_points = ref_points[inliers.ravel().astype(bool)]
-        tgt_points = tgt_points[inliers.ravel().astype(bool)]
-        if (len(ref_points) == 0) or (len(tgt_points) == 0):
-            print("Could not find enough points in the images.")
-            return np.inf, np.inf
+    ref_img: np.ndarray,
+    tgt_img: np.ndarray,
+    ref_points: np.ndarray,
+    tgt_points: np.ndarray,
+    corr_win_size: tuple = (25, 25),
+    signal_power_thresh: float = 0.9,
+    drop_unbound: bool = True,
+    invert_points: bool = True,
+) -> tuple:
+
+    ref_points_temp = ref_points.copy().astype("int")
+    tgt_points_temp = tgt_points.copy().astype("int")
 
     ref_cells = find_cells(
         ref_img,
-        ref_points,
+        ref_points_temp,
         corr_win_size,
         invert_points,
     )
     tgt_cells = find_cells(
         tgt_img,
-        tgt_points,
+        tgt_points_temp,
         corr_win_size,
         invert_points,
     )
@@ -1297,18 +1291,17 @@ def find_corrs_shifts(
 
     corrs = []
     for ref, tgt in zip(final_ref_cells, final_tgt_cells):
-        corrs.append(cv.phaseCorrelate(np.float32(tgt), np.float32(ref), None))
-    corrs = [c[0] for c in corrs if c[1] > corr_thresh]
+        corrs.append(cv.phaseCorrelate(np.float32(tgt), np.float32(ref), None)[1])
 
-    if len(corrs) == 0:
+    valid_idx = np.where(np.array(corrs) > signal_power_thresh)
+
+    if len(valid_idx[0]) == 0:
         print(
-            "WARNING: No points were found with the given correlation threshold, returning zero shifts..."
+            "WARNING: No points were found with the given correlation threshold, turning off phase correlation filter..."
         )
-        return (0.0, 0.0)
+        return ref_points, tgt_points
 
-    shift_x = np.mean([c[0] for c in corrs])
-    shift_y = np.mean([c[1] for c in corrs])
-    return shift_x, shift_y
+    return ref_points[valid_idx], tgt_points[valid_idx]
 
 
 def filter_features(
@@ -1398,21 +1391,17 @@ def co_register(
     generate_csv: bool = True,
     fps: int = 3,
     of_dist_thresh: Union[None, int, float] = 2,  # pixels
-    filter_by_ground_res: bool = False,
-    ground_resolution: float = 10.0,  # meters
-    ground_resolution_limit: float = 10.0,  # meters
-    corr_win_size: tuple = (15, 15),
-    corr_thresh: float = 0.75,
-    enhanced_shift_method: str = "mean",  # empty, "mean" or "corr"
-    remove_outlilers: bool = True,
+    phase_corr_filter: bool = False,
+    phase_corr_signal_thresh: float = 0.9,
     use_overlap: bool = False,
     rethrow_error: bool = False,
     resampling_resolution: str = "lower",
     return_shifted_images: bool = False,
     laplacian_kernel_size: Union[None, int] = None,
     lower_of_dist_thresh: Union[None, int, float] = None,
-    origin_dist_threshold: int = 1,  # pixels,
 ) -> tuple:
+
+    ORIGIN_DIST_THRESHOLD = 1
 
     criteria = (
         cv.TERM_CRITERIA_EPS | cv.TERM_CRITERIA_COUNT,
@@ -1454,8 +1443,8 @@ def co_register(
             h_diff = np.abs(np.diff(np.array([ref_height] + tgt_heights)))
 
             if (
-                (not np.all(orig_x_diff < origin_dist_threshold))
-                or (not np.all(orig_y_diff < origin_dist_threshold))
+                (not np.all(orig_x_diff < ORIGIN_DIST_THRESHOLD))
+                or (not np.all(orig_y_diff < ORIGIN_DIST_THRESHOLD))
                 or (not np.all(w_diff == 0))
                 or (not np.all(h_diff == 0))
             ) and (not use_overlap):
@@ -1610,34 +1599,29 @@ def co_register(
                     f"""For target {i} ({os.path.basename(targets[i])}), couldn't find enough good features for target or reference. Num features: {tgt_good.shape[0]}"""
                 )
                 continue
-            h, inliers = cv.estimateAffine2D(tgt_good, ref_good)
+            _, inliers = cv.estimateAffine2D(tgt_good, ref_good)
 
-            if enhanced_shift_method == "":
-                shift_x = h[0, 2]
-                shift_y = h[1, 2]
-            else:
-                if enhanced_shift_method == "corr":
-                    if not remove_outlilers:
-                        inliers = []
-                    shift_x, shift_y = find_corrs_shifts(
-                        ref_img,
-                        tgt_img,
-                        ref_good,
-                        tgt_good,
-                        inliers,
-                        corr_win_size,
-                        corr_thresh,
-                    )
-                else:
-                    ref_good_temp = ref_good[0, :, :]
-                    tgt_good_temp = tgt_good[0, :, :]
-                    if remove_outlilers:
-                        ref_good_temp = ref_good_temp[inliers.ravel().astype(bool)]
-                        tgt_good_temp = tgt_good_temp[inliers.ravel().astype(bool)]
-                    print(
-                        f"For target {i} ({os.path.basename(targets[i])}), Num features: {ref_good_temp.shape[0]}"
-                    )
-                    shift_x, shift_y = np.mean(ref_good_temp - tgt_good_temp, axis=0)
+            ref_good_temp = ref_good.copy()[0, :, :]
+            tgt_good_temp = tgt_good.copy()[0, :, :]
+            ref_good_temp = ref_good_temp[inliers.ravel().astype(bool)]
+            tgt_good_temp = tgt_good_temp[inliers.ravel().astype(bool)]
+
+            if phase_corr_filter:
+                ref_good_temp, tgt_good_temp = find_corrs_shifts(
+                    ref_img,
+                    tgt_img,
+                    ref_good_temp,
+                    tgt_good_temp,
+                    of_params["lk_params"]["winSize"],
+                    phase_corr_signal_thresh,
+                )
+
+            shift_x, shift_y = np.mean(ref_good_temp - tgt_good_temp, axis=0)
+            num_features = ref_good_temp.shape[0]
+
+            print(
+                f"For target {i} ({os.path.basename(targets[i])}), Num features: {num_features}"
+            )
 
             print(
                 f"For target {i} ({os.path.basename(targets[i])}), shifts => x: {shift_x / scale_factors[i][1]}, y: {shift_y / scale_factors[i][0]} pixels."
@@ -1650,15 +1634,6 @@ def co_register(
             if shift_x == np.inf:
                 print(
                     f"No valid shifts found for target {i} ({os.path.basename(targets[i])})"
-                )
-                continue
-
-            if (filter_by_ground_res) and (
-                (abs(shift_x * ground_resolution) > ground_resolution_limit)
-                or (abs(shift_y * ground_resolution) > ground_resolution_limit)
-            ):
-                print(
-                    f"Shifts too high for target {i} ({os.path.basename(targets[i])}). Ignoring the scene."
                 )
                 continue
 
@@ -1721,7 +1696,7 @@ def co_register(
 
         out_gif = os.path.join(
             output_path,
-            f'of{"" if enhanced_shift_method == "" else "_" + enhanced_shift_method}.gif',
+            f"output.gif",
         )
         target_titles = [f"target_{id}" for id in process_ids]
 
@@ -1763,7 +1738,7 @@ def co_register(
 
         out_gif = os.path.join(
             output_path,
-            f'raw_of{"" if enhanced_shift_method == "" else "_" + enhanced_shift_method}.gif',
+            f"raw_output.gif",
         )
         if os.path.isfile(out_gif):
             os.remove(out_gif)
@@ -1808,7 +1783,7 @@ def co_register(
         if generate_csv:
             out_ssim = os.path.join(
                 output_path,
-                f'of{"" if enhanced_shift_method == "" else "_" + enhanced_shift_method}.csv',
+                f"output.csv",
             )
             out_ssim_df = pd.DataFrame(
                 zip(target_titles, ssims_raw, ssims_aligned, mse_raw, mse_aligned),
