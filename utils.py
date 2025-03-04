@@ -804,6 +804,7 @@ def make_mosaic(
         mosaic_profile = rasterio.open(dataset_paths[0]).profile
         mosaic_profile["height"] = new_shape[0]
         mosaic_profile["width"] = new_shape[1]
+        mosaic_profile["count"] = 3
         mosaic_profile["transform"] = rasterio.Affine(
             selected_res_x, 0.0, min_left, 0.0, -selected_res_y, max_top
         )
