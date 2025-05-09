@@ -29,6 +29,8 @@ from collections import namedtuple
 import warnings
 import utm as utm_convrter
 import boto3
+import rioxarray
+from pystac_client import Client
 
 
 def get_sentinel_filenames(
@@ -1826,7 +1828,7 @@ def apply_gamma(data, gamma=0.5, stretch_hist: bool = False, adjust_hist: bool =
     return data
 
 
-def query_stac_server(query: dict, server_url: str):
+def query_stac_server(query: dict, server_url: str, pystac: bool = False) -> list:
     """
     Queries the stac-server (STAC) backend.
     This function handles pagination.
@@ -1834,80 +1836,99 @@ def query_stac_server(query: dict, server_url: str):
 
     server_url example: https://landsatlook.usgs.gov/stac-server/search
     """
+    if pystac:
+        client = Client.open(server_url)
+
     headers = {
         "Content-Type": "application/json",
         "Accept-Encoding": "gzip",
         "Accept": "application/geo+json",
     }
 
-    data = requests.post(server_url, headers=headers, json=query).json()
-    error = data.get("message", "")
-    if error:
-        raise Exception(f"STAC-Server failed and returned: {error}")
+    if pystac:
+        search = client.search(**query)
+        features = list(search.item_collection())
+        data = {"features": features, "links": ["data_links"]}
+    else:
+        data = requests.post(server_url, headers=headers, json=query).json()
+        error = data.get("message", "")
+        if error:
+            raise Exception(f"STAC-Server failed and returned: {error}")
+        features = data["features"]
 
     context = data.get("context", {})
     if not context.get("matched"):
-        if len(data["features"]) == 0:
+        if len(features) == 0:
             print("No features found.")
             return []
 
-    features = data["features"]
     if data["links"]:
-        query["page"] += 1
+        if not pystac:
+            query["page"] += 1
         if context.get("limit"):
             query["limit"] = context["limit"]
         else:
-            if len(data["features"]) < query["limit"]:
+            if len(features) < query["limit"]:
                 return features
             else:
-                query["limit"] = len(data["features"])
+                query["limit"] = len(features)
 
         features = list(itertools.chain(features, query_stac_server(query, server_url)))
 
     return features
 
 
-def find_landsat_scenes_dict(
-    features: dict, one_per_month: bool = True, start_end_years: list[int] = []
-) -> dict:
+def find_scenes_dict(
+    features: list,
+    one_per_month: bool = True,
+    start_end_years: list[int] = [],
+    acceptance_list: list[str] = [],
+) -> dict | tuple:
     scene_list = []
     scene_dict = dict()
     for feature in features:
+        is_item = type(feature) != dict
+
+        if is_item:
+            feature = feature.to_dict()
+
         id = feature["id"]
 
-        scene_id = feature["properties"]["landsat:scene_id"]
+        if "landsat:scene_id" in feature["properties"]:
+            scene_id = feature["landsat:scene_id"]
+        else:
+            scene_id = None
 
         assets = feature["assets"]
 
-        acceptance_condition = (
-            ("red" in assets) and ("green" in assets) and ("blue" in assets)
-        )
+        if len(acceptance_list) > 0:
+            acceptance_condition = all([s in assets for s in acceptance_list])
+        else:
+            acceptance_condition = True
 
         if acceptance_condition:
-            red = assets["red"]["href"]
-            red_alternate = assets["red"]["alternate"]["s3"]["href"]
+            scene_dict[id] = dict(scene_id=scene_id)
+            for s in acceptance_list:
+                url = assets[s]["href"]
+                if "alternate" in assets[s]:
+                    url_alternate = assets[s]["alternate"]["s3"]["href"]
+                else:
+                    url_alternate = None
 
-            green = assets["green"]["href"]
-            green_alternate = assets["green"]["alternate"]["s3"]["href"]
+                scene_dict[id][s] = url
+                scene_dict[id][f"{s}_alternate"] = url_alternate
 
-            blue = assets["blue"]["href"]
-            blue_alternate = assets["blue"]["alternate"]["s3"]["href"]
-
-            scene_dict[id] = dict(
-                scene_id=scene_id,
-                red=(red, red_alternate),
-                green=(green, green_alternate),
-                blue=(blue, blue_alternate),
-            )
-
-    path_rows = [k.split("_")[2] for k in scene_dict]
-    scene_dict_pr = {}
-    for pr in path_rows:
-        temp_dict = {}
-        required_keys = [k for k in scene_dict if pr in k]
-        for k in required_keys:
-            temp_dict[k] = scene_dict[k]
-        scene_dict_pr[pr] = temp_dict
+    if "landsat:scene_id" in feature["properties"]:
+        path_rows = [k.split("_")[2] for k in scene_dict]
+        scene_dict_pr = {}
+        for pr in path_rows:
+            temp_dict = {}
+            required_keys = [k for k in scene_dict if pr in k]
+            for k in required_keys:
+                temp_dict[k] = scene_dict[k]
+            scene_dict_pr[pr] = temp_dict
+    else:
+        return scene_dict
 
     scene_dict_pr_time = {}
     for pr in scene_dict_pr:
@@ -1976,8 +1997,10 @@ def get_search_query(
     return query
 
 
-def make_landsat_true_color_scene(
-    dataset_paths: list[str], output_path: str
+def make_true_color_scene(
+    dataset_paths: list[str],
+    output_path: str | None = None,
+    enhance: bool = False,
 ) -> np.ndarray:
     red = dataset_paths[0]
     green = dataset_paths[1]
@@ -1995,9 +2018,11 @@ def make_landsat_true_color_scene(
     blues = rasterio.open(blue).read()
     bluef = flip_img(blues)
 
-    img = apply_gamma(cv.merge([redf, greenf, bluef]), 1.0, True)
+    img = cv.merge([redf, greenf, bluef])
+    if enhance:
+        img = apply_gamma(img, 1.0, True)
 
-    if output_path != "":
+    if output_path is not None:
         with rasterio.open(output_path, "w", **profile) as ds:
             ds.write(img[:, :, 0], 1)
             ds.write(img[:, :, 1], 2)
@@ -2095,15 +2120,27 @@ def read_kml_polygon(
     return coords, bbox
 
 
-def stream_scene_from_aws(geotiff_file, aws_session, metadata_only: bool = False):
-    scene = np.zeros(0)
-    with rasterio.Env(aws_session):
+def stream_scene_from_aws(
+    geotiff_file,
+    aws_session: rasterio.session.AWSSession | None = None,
+    metadata_only: bool = False,
+):
+    def get_data():
         with rasterio.open(geotiff_file) as geo_fp:
             profile = geo_fp.profile
             bounds = geo_fp.bounds
             crs = geo_fp.crs
             if not metadata_only:
                 scene = geo_fp.read()
+        return scene, profile, bounds, crs
+
+    scene = np.zeros(0)
+    if aws_session is None:
+        with rasterio.Env(aws_session):
+            scene, profile, bounds, crs = get_data()
+    else:
+        scene, profile, bounds, crs = get_data()
+
     return scene, {"profile": profile, "bounds": bounds, "crs": crs}
 
 

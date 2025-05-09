@@ -12,3 +12,5 @@ black
 pykml
 utm
 boto3
+rioxarray
+pystac-client
