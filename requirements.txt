@@ -10,3 +10,5 @@ scikit-image
 requests
 black
 pykml
+utm
+boto3

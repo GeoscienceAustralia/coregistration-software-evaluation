@@ -28,6 +28,7 @@ from pykml import parser
 from collections import namedtuple
 import warnings
 import utm as utm_convrter
+import boto3
 
 
 def get_sentinel_filenames(
@@ -1846,13 +1847,20 @@ def query_stac_server(query: dict, server_url: str):
 
     context = data.get("context", {})
     if not context.get("matched"):
-        return []
-    print(context)
+        if len(data["features"]) == 0:
+            print("No features found.")
+            return []
 
     features = data["features"]
     if data["links"]:
         query["page"] += 1
-        query["limit"] = context["limit"]
+        if context.get("limit"):
+            query["limit"] = context["limit"]
+        else:
+            if len(data["features"]) < query["limit"]:
+                return features
+            else:
+                query["limit"] = len(data["features"])
 
         features = list(itertools.chain(features, query_stac_server(query, server_url)))
 
@@ -1933,33 +1941,37 @@ def find_landsat_scenes_dict(
     return scene_dict_pr_time, scene_list
 
 
-def get_landsat_search_query(
+def get_search_query(
     bbox: Union[list, BoundingBox],
-    collections: list[str] = ["landsat-c2l2-sr", "landsat-c2l2-st"],
-    collection_category: list[str] = ["T1", "T2", "RT"],
-    platform: str = "LANDSAT_8",
+    collections: list[str] | None = ["landsat-c2l2-sr", "landsat-c2l2-st"],
+    collection_category: list[str] | None = ["T1", "T2", "RT"],
+    platform: str | None = "LANDSAT_8",
     start_date: str = "2014-10-30T00:00:00",
     end_date: str = "2015-01-23T23:59:59",
-    cloud_cover: int = 80,
+    cloud_cover: int | None = 80,
+    is_landsat: bool = True,
 ) -> dict:
     if type(bbox) != list:
         bbox = [bbox.left, bbox.bottom, bbox.right, bbox.top]
     query = {
         "bbox": bbox,
-        "query": {
-            "platform": {"in": [platform]},
-        },
         "page": 1,
         "limit": 100,
     }
-    if len(collections) != 0:
+    if not is_landsat:
+        platform = None
+        collection_category = None
+        cloud_cover = None
+    if platform is not None:
+        query["query"] = {"platform": {"in": [platform]}}
+    if collections is not None:
         query["collections"] = collections
-    if len(collection_category) != 0:
-        query["query"]["landsat:collection_category"] = {"in": collection_category}
+    if collection_category is not None:
+        query["query"] = {"landsat:collection_category": {"in": collection_category}}
     if (start_date != "") and (end_date != ""):
         query["datetime"] = f"{start_date}.000Z/{end_date}.999Z"
-    if cloud_cover != -1:
-        query["query"]["eo:cloud_cover"] = {"lte": cloud_cover}
+    if cloud_cover is not None:
+        query["query"] = {"eo:cloud_cover": {"lte": cloud_cover}}
 
     return query
 
@@ -2126,3 +2138,38 @@ def hillshade(
     )
 
     return 255 * (shaded + 1) / 2
+
+
+def download_sentinel_product(
+    product: str,
+    target: str = "",
+    aws_access_key: str | None = None,
+    aws_secret_key: str | None = None,
+) -> None:
+    """
+    Downloads every file in bucket with provided product as prefix
+
+    Raises FileNotFoundError if the product was not found
+
+    Args:
+        bucket: boto3 Resource bucket object
+        product: Path to product
+        target: Local catalog for downloaded files. Should end with an `/`. Default current directory.
+    """
+    # session = boto3.session.Session()
+    s3 = boto3.resource(
+        "s3",
+        endpoint_url="https://eodata.dataspace.copernicus.eu",
+        aws_access_key_id=aws_access_key,
+        aws_secret_access_key=aws_secret_key,
+        region_name="default",
+    )  # generated secrets
+    bucket = s3.Bucket("eodata")
+    files = bucket.objects.filter(Prefix=product)
+    if not list(files):
+        raise FileNotFoundError(f"Could not find any files for {product}")
+    for file in files:
+        os.makedirs(os.path.dirname(file.key), exist_ok=True)
+        if not os.path.isdir(file.key):
+            bucket.download_file(file.key, f"{target}{file.key}")
+    return None
