@@ -1920,22 +1920,26 @@ def find_scenes_dict(
 
     if "landsat:scene_id" in feature["properties"]:
         path_rows = [k.split("_")[2] for k in scene_dict]
-        scene_dict_pr = {}
-        for pr in path_rows:
-            temp_dict = {}
-            required_keys = [k for k in scene_dict if pr in k]
-            for k in required_keys:
-                temp_dict[k] = scene_dict[k]
-            scene_dict_pr[pr] = temp_dict
+        time_ind = 3
     else:
-        return scene_dict
+        path_rows = ["_".join(k.split("_")[3:6]) for k in scene_dict]
+        time_ind = 2
+    scene_dict_pr = {}
+    for pr in path_rows:
+        temp_dict = {}
+        required_keys = [k for k in scene_dict if pr in k]
+        for k in required_keys:
+            temp_dict[k] = scene_dict[k]
+        scene_dict_pr[pr] = temp_dict
 
     scene_dict_pr_time = {}
     for pr in scene_dict_pr:
         se = pd.Series(list(scene_dict_pr[pr].keys())).astype("str")
-        g = [s.split("_")[3][0:6] for s in list(scene_dict_pr[pr].keys())]
+        g = [s.split("_")[time_ind][0:6] for s in list(scene_dict_pr[pr].keys())]
         if len(start_end_years) != 0:
-            years = [int(s.split("_")[3][0:4]) for s in list(scene_dict_pr[pr].keys())]
+            years = [
+                int(s.split("_")[time_ind][0:4]) for s in list(scene_dict_pr[pr].keys())
+            ]
             year_range = range(start_end_years[0], start_end_years[1] + 1)
             valid_idx = list(
                 filter(lambda i: years[i] in year_range, range(len(years)))
