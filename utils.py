@@ -1922,7 +1922,11 @@ def find_scenes_dict(
         path_rows = [k.split("_")[2] for k in scene_dict]
         time_ind = 3
     else:
-        path_rows = ["_".join(k.split("_")[3:6]) for k in scene_dict]
+        if type(features[0]) == dict:
+            prr = [3, 6]
+        else:
+            prr = [1, 4]
+        path_rows = ["_".join(k.split("_")[prr[0] : prr[1]]) for k in scene_dict]
         time_ind = 2
     scene_dict_pr = {}
     for pr in path_rows:
@@ -1949,6 +1953,8 @@ def find_scenes_dict(
         groups = list(se.groupby(g))
         temp_dict_time = {}
         for i, t in enumerate([el[0] for el in groups]):
+            if type(t) == tuple:
+                t = t[0]
             temp_list = []
             if one_per_month:
                 temp_dict = scene_dict_pr[pr][groups[i][1].iloc[0]]
