@@ -31,6 +31,10 @@ import utm as utm_convrter
 import boto3
 import rioxarray
 from pystac_client import Client
+from osgeo import ogr
+from shapely import ops, from_wkt
+from shapely import Polygon
+from pathlib import Path
 
 
 def get_sentinel_filenames(
@@ -2220,3 +2224,29 @@ def download_sentinel_product(
         if not os.path.isdir(file.key):
             bucket.download_file(file.key, f"{target}{file.key}")
     return None
+
+
+def kml_to_poly(
+    kml_file: Path,
+) -> Polygon | list[Polygon]:
+    """Reads KML file and returns Shaply Polygon
+
+    Parameters
+    ----------
+    kml_file : Path
+
+    Returns
+    -------
+    Polygon
+    """
+    driver = ogr.GetDriverByName("KML")
+    datasource = driver.Open(kml_file)
+    layer = datasource.GetLayer()
+    poly_list = []
+    feat = layer.GetNextFeature()
+    while feat is not None:
+        geom = feat.geometry()
+        poly = geom.ExportToIsoWkt()
+        poly_list.append(ops.transform(lambda x, y, z=None: (x, y), from_wkt(poly)))
+        feat = layer.GetNextFeature()
+    return poly_list[0] if len(poly_list) == 1 else poly_list
