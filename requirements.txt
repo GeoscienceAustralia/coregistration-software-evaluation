@@ -14,3 +14,4 @@ utm
 boto3
 rioxarray
 pystac-client
+dem-handler @ git+https://github.com/GeoscienceAustralia/dem-handler.git@main
