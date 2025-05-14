@@ -1,5 +1,5 @@
-data/inputs/*
-data/outputs/*
+data/inputs*/*
+data/outputs*/*
 data/asf/*
 arosics/*
 data/gefolki/*
