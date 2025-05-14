@@ -26,15 +26,16 @@ from skimage.exposure import equalize_hist, rescale_intensity
 import itertools
 from pykml import parser
 from collections import namedtuple
-import warnings
 import utm as utm_convrter
 import boto3
-import rioxarray
 from pystac_client import Client
 from osgeo import ogr
 from shapely import ops, from_wkt
 from shapely import Polygon
 from pathlib import Path
+from typing import Literal
+from datetime import datetime
+from datetime import timedelta
 
 
 def get_sentinel_filenames(
@@ -1889,6 +1890,7 @@ def find_scenes_dict(
     one_per_month: bool = True,
     start_end_years: list[int] = [],
     acceptance_list: list[str] = [],
+    remove_duplicate_times: bool = True,
 ) -> dict | tuple:
     scene_list = []
     scene_dict = dict()
@@ -1931,7 +1933,7 @@ def find_scenes_dict(
         if type(features[0]) == dict:
             path_rows = ["_".join(k.split("_")[3:6]) for k in scene_dict]
         else:
-            path_rows = ["_".join(k.split("_")[1:3])[0:12] for k in scene_dict]
+            path_rows = ["_".join(k.split("_")[1:3])[0:5] for k in scene_dict]
         time_ind = 2
     scene_dict_pr = {}
     for pr in path_rows:
@@ -1970,6 +1972,15 @@ def find_scenes_dict(
                     temp_dict = scene_dict_pr[pr][k]
                     temp_dict["scene_name"] = k
                     temp_list.append(temp_dict)
+            if remove_duplicate_times:
+                times_idx = sorted(
+                    np.unique(
+                        [re.findall(r"\d{8}", d["scene_name"])[0] for d in temp_list],
+                        return_index=True,
+                    )[1].tolist()
+                )
+                temp_list = [temp_list[idx] for idx in times_idx]
+
             scene_list.extend(temp_list)
             temp_dict_time[t] = temp_list
         scene_dict_pr_time[pr] = temp_dict_time
@@ -2251,3 +2262,100 @@ def kml_to_poly(
         poly_list.append(ops.transform(lambda x, y, z=None: (x, y), from_wkt(poly)))
         feat = layer.GetNextFeature()
     return poly_list[0] if len(poly_list) == 1 else poly_list
+
+
+def get_pair_dict(
+    data: dict,
+    time_distance: str = Literal["closest", "farthest"],
+    reference_month: str = "01",
+) -> list:
+    """Finds the closest or farthest member of the given scene dictionary in time in it to a given reference scence.
+
+    Parameters
+    ----------
+    data : dict
+        Scenes dictionary
+    reference_id : str
+        Id of the reference scenes in the scene dictionary
+    time_distance : str, optional
+        Distance option, by default Literal["closest", "farthest"]
+    prefered_month: str, optional
+        Prefered month in the scenes dict to retrieve data for the reference scene, by default 01
+
+    Returns
+    -------
+    list
+        list of reference data and its closest/farthest target
+    """
+
+    data = data.copy()
+    
+    if time_distance not in ["closest", "farthest"]:
+        raise ValueError("time distance options are only closest or farthest")
+
+    scene_dates = list(data.keys())
+    try:
+        reference_date_idx = [reference_month in date for date in scene_dates].index(
+            True
+        )
+        reference_date = scene_dates[reference_date_idx]
+    except:
+        raise Exception(
+            "Could not find data for the provided month for the reference scene."
+        )
+    reference_date_obj = datetime.strptime(reference_date, "%Y%m")
+    ref_data = data[reference_date]
+    del data[reference_date]
+    del scene_dates[reference_date_idx]
+
+    scene_ym_objects = [datetime.strptime(date, "%Y%m") for date in scene_dates]
+
+    still_looking = False
+    if len(ref_data) > 1:
+        scene_names = [d["scene_name"] for d in ref_data]
+        scene_ymd_objects = [
+            datetime.strptime(re.findall(r"\d{8}", sn)[0], "%Y%m%d")
+            for sn in scene_names
+        ]
+        date_diffs = [d - scene_ymd_objects[0] for d in scene_ymd_objects[1:]]
+        if ~np.all(date_diffs == timedelta(0)):
+            if time_distance == "closest":
+                idx = np.argmin(date_diffs)
+            elif len(data) == 0:
+                idx = np.argmax(date_diffs)
+            else:
+                still_looking = True
+            if not still_looking:
+                return [ref_data[0], ref_data[idx]]
+        else:
+            raise Exception("Duplicate times were found in the data.")
+
+    if (len(ref_data) == 1) or (still_looking):
+        if len(data) > 0:
+            date_diffs = [d - reference_date_obj for d in scene_ym_objects]
+            if ~np.all(date_diffs == timedelta(0)):
+                if time_distance == "closest":
+                    idx = np.argmin(date_diffs)
+                else:
+                    idx = np.argmax(date_diffs)
+                target_data = data[list(data.keys())[idx]]
+                if len(target_data) == 0:
+                    raise Exception("Not enough scenes in the provided dataset")
+                scene_names = [d["scene_name"] for d in target_data]
+                scene_ymd_objects = [
+                    datetime.strptime(re.findall(r"\d{8}", sn)[0], "%Y%m%d")
+                    for sn in scene_names
+                ]
+                ref_ymd_object = datetime.strptime(
+                    re.findall(r"\d{8}", ref_data[0]["scene_name"])[0], "%Y%m%d"
+                )
+                date_diffs = [d - ref_ymd_object for d in scene_ymd_objects]
+                if time_distance == "closest":
+                    idx = np.argmin(date_diffs)
+                else:
+                    idx = np.argmax(date_diffs)
+                return [ref_data[0], target_data[idx]]
+            else:
+                raise Exception("Duplicate times were found in the data.")
+        else:
+            raise Exception("Not enough scenes in the provided dataset.")
