@@ -1840,34 +1840,34 @@ def query_stac_server(query: dict, server_url: str, pystac: bool = False) -> lis
 
     server_url example: https://landsatlook.usgs.gov/stac-server/search
     """
+
     if pystac:
         client = Client.open(server_url)
-
-    headers = {
-        "Content-Type": "application/json",
-        "Accept-Encoding": "gzip",
-        "Accept": "application/geo+json",
-    }
-
-    if pystac:
         search = client.search(**query)
         features = list(search.item_collection())
-        data = {"features": features, "links": ["data_links"]}
+        if len(features) == 0:
+            print("No features found.")
+            return []
     else:
+        headers = {
+            "Content-Type": "application/json",
+            "Accept-Encoding": "gzip",
+            "Accept": "application/geo+json",
+        }
+
         data = requests.post(server_url, headers=headers, json=query).json()
         error = data.get("message", "")
         if error:
             raise Exception(f"STAC-Server failed and returned: {error}")
         features = data["features"]
 
-    context = data.get("context", {})
-    if not context.get("matched"):
-        if len(features) == 0:
-            print("No features found.")
-            return []
+        context = data.get("context", {})
+        if not context.get("matched"):
+            if len(features) == 0:
+                print("No features found.")
+                return []
 
-    if data["links"]:
-        if not pystac:
+        if data["links"]:
             query["page"] += 1
         if context.get("limit"):
             query["limit"] = context["limit"]
@@ -1877,7 +1877,9 @@ def query_stac_server(query: dict, server_url: str, pystac: bool = False) -> lis
             else:
                 query["limit"] = len(features)
 
-        features = list(itertools.chain(features, query_stac_server(query, server_url)))
+        features = list(
+            itertools.chain(features, query_stac_server(query, server_url, pystac))
+        )
 
     return features
 
@@ -1927,10 +1929,9 @@ def find_scenes_dict(
         time_ind = 3
     else:
         if type(features[0]) == dict:
-            prr = [3, 6]
+            path_rows = ["_".join(k.split("_")[3:6]) for k in scene_dict]
         else:
-            prr = [1, 4]
-        path_rows = ["_".join(k.split("_")[prr[0] : prr[1]]) for k in scene_dict]
+            path_rows = ["_".join(k.split("_")[1:3])[0:12] for k in scene_dict]
         time_ind = 2
     scene_dict_pr = {}
     for pr in path_rows:
