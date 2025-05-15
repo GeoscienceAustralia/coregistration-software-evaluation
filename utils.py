@@ -1903,7 +1903,7 @@ def find_scenes_dict(
         id = feature["id"]
 
         if "landsat:scene_id" in feature["properties"]:
-            scene_id = feature["landsat:scene_id"]
+            scene_id = feature["properties"]["landsat:scene_id"]
         else:
             scene_id = None
 
@@ -2317,12 +2317,12 @@ def get_pair_dict(
             datetime.strptime(re.findall(r"\d{8}", sn)[0], "%Y%m%d")
             for sn in scene_names
         ]
-        date_diffs = [d - scene_ymd_objects[0] for d in scene_ymd_objects[1:]]
+        date_diffs = [abs(d - scene_ymd_objects[0]) for d in scene_ymd_objects[1:]]
         if ~np.all(date_diffs == timedelta(0)):
             if time_distance == "closest":
-                idx = np.argmin(date_diffs)
+                idx = np.argmin(date_diffs) + 1
             elif len(data) == 0:
-                idx = np.argmax(date_diffs)
+                idx = np.argmax(date_diffs) + 1
             else:
                 still_looking = True
             if not still_looking:
@@ -2332,7 +2332,7 @@ def get_pair_dict(
 
     if (len(ref_data) == 1) or (still_looking):
         if len(data) > 0:
-            date_diffs = [d - reference_date_obj for d in scene_ym_objects]
+            date_diffs = [abs(d - reference_date_obj) for d in scene_ym_objects]
             if ~np.all(date_diffs == timedelta(0)):
                 if time_distance == "closest":
                     idx = np.argmin(date_diffs)
@@ -2349,7 +2349,7 @@ def get_pair_dict(
                 ref_ymd_object = datetime.strptime(
                     re.findall(r"\d{8}", ref_data[0]["scene_name"])[0], "%Y%m%d"
                 )
-                date_diffs = [d - ref_ymd_object for d in scene_ymd_objects]
+                date_diffs = [abs(d - ref_ymd_object) for d in scene_ymd_objects]
                 if time_distance == "closest":
                     idx = np.argmin(date_diffs)
                 else:
