@@ -2161,7 +2161,7 @@ def stream_scene_from_aws(
         return scene, profile, bounds, crs
 
     scene = np.zeros(0)
-    if aws_session is None:
+    if aws_session is not None:
         with rasterio.Env(aws_session):
             scene, profile, bounds, crs = get_data()
     else:
@@ -2359,3 +2359,19 @@ def get_pair_dict(
                 raise Exception("Duplicate times were found in the data.")
         else:
             raise Exception("Not enough scenes in the provided dataset.")
+
+
+def combine_scene_dicts(scene_dicts=list[dict]) -> dict:
+    """
+    Combine multiple scene dictionaries into a single dictionary.
+    """
+    scene_dicts = scene_dicts.copy()
+    combined = {}
+    for i, d in enumerate(scene_dicts):
+        keys = d.keys()
+        for key in keys:
+            if key not in combined:
+                combined[key] = d[key]
+            else:
+                combined[key].extend(d[key])
+    return combined
