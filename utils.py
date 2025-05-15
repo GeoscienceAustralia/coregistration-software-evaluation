@@ -1870,17 +1870,17 @@ def query_stac_server(query: dict, server_url: str, pystac: bool = False) -> lis
 
         if data["links"]:
             query["page"] += 1
-        if context.get("limit"):
-            query["limit"] = context["limit"]
-        else:
-            if len(features) < query["limit"]:
-                return features
+            if context.get("limit"):
+                query["limit"] = context["limit"]
             else:
-                query["limit"] = len(features)
+                if len(features) < query["limit"]:
+                    return features
+                else:
+                    query["limit"] = len(features)
 
-        features = list(
-            itertools.chain(features, query_stac_server(query, server_url, pystac))
-        )
+            features = list(
+                itertools.chain(features, query_stac_server(query, server_url, pystac))
+            )
 
     return features
 
@@ -2289,7 +2289,7 @@ def get_pair_dict(
     """
 
     data = data.copy()
-    
+
     if time_distance not in ["closest", "farthest"]:
         raise ValueError("time distance options are only closest or farthest")
 
