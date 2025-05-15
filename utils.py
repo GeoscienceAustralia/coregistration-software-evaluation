@@ -2035,16 +2035,19 @@ def make_true_color_scene(
     profile["count"] = 3
     profile["dtype"] = "uint8"
 
-    reds = rasterio.open(red).read()
-    redf = flip_img(reds)
+    reds = rasterio.open(red).read(1)
+    if reds.dtype == "uint16":
+        reds = np.clip(reds / 256, 0, 255).astype("uint8")
 
-    greens = rasterio.open(green).read()
-    greenf = flip_img(greens)
+    greens = rasterio.open(green).read(1)
+    if greens.dtype == "uint16":
+        greens = np.clip(greens / 256, 0, 255).astype("uint8")
 
-    blues = rasterio.open(blue).read()
-    bluef = flip_img(blues)
+    blues = rasterio.open(blue).read(1)
+    if blues.dtype == "uint16":
+        blues = np.clip(blues / 256, 0, 255).astype("uint8")
 
-    img = cv.merge([redf, greenf, bluef])
+    img = cv.merge([reds, greens, blues])
     if enhance:
         img = apply_gamma(img, 1.0, True)
 
