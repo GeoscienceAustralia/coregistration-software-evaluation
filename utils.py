@@ -1221,8 +1221,11 @@ def warp_affine_dataset(
                     ds.write(img[:, :, i], i + 1)
         else:
             with rasterio.open(output_path, "w", **profile) as ds:
-                for i in range(0, profile["count"]):
-                    ds.write(warped_img[:, :, i], i + 1)
+                if profile["count"] == 1:
+                    ds.write(warped_img, 1)
+                else:
+                    for i in range(0, profile["count"]):
+                        ds.write(warped_img[:, :, i], i + 1)
 
     return warped_img
 
@@ -2408,6 +2411,7 @@ def generate_results_from_raw_inputs(
         method (str): Method name to be used in the output names, optional, by default output.
     """
 
+    os.makedirs(output_dir, exist_ok=True)
     output_path = os.path.join(output_dir, f"{method}.gif")
     if os.path.isfile(output_path):
         os.remove(output_path)
