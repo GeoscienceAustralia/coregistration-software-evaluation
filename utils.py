@@ -2012,16 +2012,21 @@ def get_search_query(
         platform = None
         collection_category = None
         cloud_cover = None
+    else:
+        query["query"] = {}
     if platform is not None:
-        query["query"] = {"platform": {"in": [platform]}}
+        query["query"] = query["query"] | {"platform": {"in": [platform]}}
     if collections is not None:
         query["collections"] = collections
     if collection_category is not None:
-        query["query"] = {"landsat:collection_category": {"in": collection_category}}
+        query["query"] = query["query"] | {"landsat:collection_category": {"in": collection_category}}
     if (start_date != "") and (end_date != ""):
         query["datetime"] = f"{start_date}.000Z/{end_date}.999Z"
     if cloud_cover is not None:
-        query["query"] = {"eo:cloud_cover": {"lte": cloud_cover}}
+        query["query"] = query["query"] | {"eo:cloud_cover": {"lte": cloud_cover}}
+    
+    if len(query["query"]) == 0:
+        del query["query"]
 
     return query
 
