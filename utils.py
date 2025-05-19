@@ -1761,7 +1761,7 @@ def co_register(
 
         out_gif = os.path.join(
             output_path,
-            f"raw_output.gif",
+            f"output_raw.gif",
         )
         if os.path.isfile(out_gif):
             os.remove(out_gif)
@@ -2391,3 +2391,108 @@ def combine_scene_dicts(scene_dicts=list[dict]) -> dict:
             else:
                 combined[key].extend(d[key])
     return combined
+
+
+def generate_results_from_raw_inputs(
+    ref_image: str,
+    processed_output_images: list[str],
+    output_dir: str,
+    method: str = "output",
+) -> None:
+    """
+    Generates a gif from the processed images and the reference image.
+    Args:
+        ref_image (str): Path to the reference image.
+        processed_output_images (list[str]): List of paths to the processed images.
+        output_dir (str): Directory to save the outputs.
+        method (str): Method name to be used in the output names, optional, by default output.
+    """
+
+    output_path = os.path.join(output_dir, f"{method}.gif")
+    if os.path.isfile(output_path):
+        os.remove(output_path)
+
+    tgt_aligned_list = []
+    ref_imgs = []
+    for tgt in processed_output_images:
+        _, (_, _, ref_overlap, tgt_overlap), _ = find_overlap(ref_image, tgt, True)
+        ref_imgs.append(ref_overlap)
+        tgt_aligned_list.append(tgt_overlap)
+
+    datasets_paths = [ref_image] + processed_output_images
+    ssims_aligned = [
+        np.round(ssim(ref_imgs[id], tgt_aligned_list[id], win_size=3), 3)
+        for id in range(len(tgt_aligned_list))
+    ]
+    mse_aligned = [
+        np.round(mse(ref_imgs[id], tgt_aligned_list[id]), 3)
+        for id in range(len(tgt_aligned_list))
+    ]
+    target_titles = [f"target_{str(i)}" for i in range(len(processed_output_images))]
+    datasets_titles = ["Reference"] + [
+        f"{target_title}, ssim:{ssim_score}, mse:{mse_score}"
+        for target_title, ssim_score, mse_score in zip(
+            target_titles, ssims_aligned, mse_aligned
+        )
+    ]
+    make_difference_gif(
+        datasets_paths,
+        output_path,
+        datasets_titles,
+        mosaic_scenes=True,
+    )
+
+    output_path = os.path.join(output_dir, f"{method}_raw.gif")
+    if os.path.isfile(output_path):
+        os.remove(output_path)
+
+    tgt_images_copy = [
+        os.path.join(os.path.dirname(ref_image), os.path.basename(img))
+        for img in processed_output_images
+    ]
+    tgt_raw_list = []
+    ref_imgs = []
+    for tgt in tgt_images_copy:
+        _, (_, _, ref_overlap, tgt_overlap), _ = find_overlap(ref_image, tgt, True)
+        ref_imgs.append(ref_overlap)
+        tgt_raw_list.append(tgt_overlap)
+
+    datasets_paths = [ref_image] + tgt_images_copy
+    ssims_aligned_raw = [
+        np.round(ssim(ref_imgs[id], tgt_raw_list[id], win_size=3), 3)
+        for id in range(len(tgt_raw_list))
+    ]
+    mse_aligned_raw = [
+        np.round(mse(ref_imgs[id], tgt_raw_list[id]), 3)
+        for id in range(len(tgt_raw_list))
+    ]
+    datasets_titles = ["Reference"] + [
+        f"{target_title}, ssim:{ssim_score}, mse:{mse_score}"
+        for target_title, ssim_score, mse_score in zip(
+            target_titles, ssims_aligned_raw, mse_aligned_raw
+        )
+    ]
+    make_difference_gif(
+        datasets_paths,
+        output_path,
+        datasets_titles,
+        mosaic_scenes=True,
+    )
+
+    output_path = os.path.join(output_dir, f"{method}.csv")
+    if os.path.isfile(output_path):
+        os.remove(output_path)
+    out_ssim_df = pd.DataFrame(
+        zip(
+            target_titles,
+            ssims_aligned_raw,
+            ssims_aligned,
+            mse_aligned_raw,
+            mse_aligned,
+        ),
+        columns=["Title", "SSIM Raw", "SSIM Aligned", "MSE Raw", "MSE Aligned"],
+        index=None,
+    )
+    out_ssim_df.to_csv(output_path, encoding="utf-8")
+
+    return None
