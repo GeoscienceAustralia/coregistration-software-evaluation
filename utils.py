@@ -2027,12 +2027,15 @@ def make_true_color_scene(
     dataset_paths: list[str],
     output_path: str | None = None,
     enhance: bool = False,
+    gray_scale: bool = False,
+    averaging: bool = False,
 ) -> np.ndarray:
     red = dataset_paths[0]
     green = dataset_paths[1]
     blue = dataset_paths[2]
     profile = rasterio.open(red).profile
-    profile["count"] = 3
+    if not gray_scale:
+        profile["count"] = 3
     profile["dtype"] = "uint8"
 
     reds = rasterio.open(red).read(1)
@@ -2048,14 +2051,24 @@ def make_true_color_scene(
         blues = np.clip(blues / 256, 0, 255).astype("uint8")
 
     img = cv.merge([reds, greens, blues])
+
+    if gray_scale:
+        if averaging:
+            img = np.mean(img, axis=2).astype("uint8")
+        else:
+            img = cv.cvtColor(img, cv.COLOR_BGR2GRAY)
+
     if enhance:
         img = apply_gamma(img, 1.0, True)
 
     if output_path is not None:
         with rasterio.open(output_path, "w", **profile) as ds:
-            ds.write(img[:, :, 0], 1)
-            ds.write(img[:, :, 1], 2)
-            ds.write(img[:, :, 2], 3)
+            if gray_scale:
+                ds.write(img, 1)
+            else:
+                ds.write(img[:, :, 0], 1)
+                ds.write(img[:, :, 1], 2)
+                ds.write(img[:, :, 2], 3)
 
     return img
 
