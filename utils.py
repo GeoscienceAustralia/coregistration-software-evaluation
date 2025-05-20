@@ -1894,6 +1894,7 @@ def find_scenes_dict(
     start_end_years: list[int] = [],
     acceptance_list: list[str] = [],
     remove_duplicate_times: bool = True,
+    duplicate_idx: int = 0,
 ) -> dict | tuple:
     scene_list = []
     scene_dict = dict()
@@ -1929,7 +1930,7 @@ def find_scenes_dict(
                 scene_dict[id][s] = url
                 scene_dict[id][f"{s}_alternate"] = url_alternate
 
-    if "landsat:scene_id" in feature["properties"]:
+    if "landsat:scene_id" in features[0]["properties"]:
         path_rows = [k.split("_")[2] for k in scene_dict]
         time_ind = 3
     else:
@@ -1976,12 +1977,32 @@ def find_scenes_dict(
                     temp_dict["scene_name"] = k
                     temp_list.append(temp_dict)
             if remove_duplicate_times:
-                times_idx = sorted(
-                    np.unique(
-                        [re.findall(r"\d{8}", d["scene_name"])[0] for d in temp_list],
-                        return_index=True,
-                    )[1].tolist()
-                )
+                if duplicate_idx == 0:
+                    times_idx = sorted(
+                        np.unique(
+                            [
+                                re.findall(r"\d{8}", d["scene_name"])[0]
+                                for d in temp_list
+                            ],
+                            return_index=True,
+                        )[1].tolist()
+                    )
+                else:
+                    times_list = [
+                        re.findall(r"\d{8}", d["scene_name"])[0] for d in temp_list
+                    ]
+                    unique_times = np.unique(times_list)
+                    unique_idx_list = [
+                        [i for i in range(len(times_list)) if times_list[i] == ut]
+                        for ut in unique_times
+                    ]
+                    times_idx = []
+                    for i, idx in enumerate(unique_idx_list):
+                        if len(idx) < duplicate_idx + 1:
+                            temp_idx = len(idx) - 1
+                        else:
+                            temp_idx = duplicate_idx
+                        times_idx.append(idx[temp_idx])
                 temp_list = [temp_list[idx] for idx in times_idx]
 
             scene_list.extend(temp_list)
@@ -2019,12 +2040,14 @@ def get_search_query(
     if collections is not None:
         query["collections"] = collections
     if collection_category is not None:
-        query["query"] = query["query"] | {"landsat:collection_category": {"in": collection_category}}
+        query["query"] = query["query"] | {
+            "landsat:collection_category": {"in": collection_category}
+        }
     if (start_date != "") and (end_date != ""):
         query["datetime"] = f"{start_date}.000Z/{end_date}.999Z"
     if cloud_cover is not None:
         query["query"] = query["query"] | {"eo:cloud_cover": {"lte": cloud_cover}}
-    
+
     if len(query["query"]) == 0:
         del query["query"]
 
