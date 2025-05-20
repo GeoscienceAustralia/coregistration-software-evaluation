@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import Literal
 from datetime import datetime
 from datetime import timedelta
+import time
 
 
 def get_sentinel_filenames(
@@ -1413,6 +1414,11 @@ def co_register(
     lower_of_dist_thresh: Union[None, int, float] = None,
     band_number: Union[None, int] = None,
 ) -> tuple:
+    """
+    Co-registers the target images to the reference image using optical flow and phase correlation.
+    """
+
+    run_start = full_start = time.time()
 
     ORIGIN_DIST_THRESHOLD = 1
 
@@ -1708,6 +1714,8 @@ def co_register(
             else:
                 print(e)
 
+    run_time = time.time() - run_start
+
     if export_outputs:
         if laplacian_kernel_size is not None:
             if use_overlap:
@@ -1819,6 +1827,10 @@ def co_register(
             out_ssim_df.to_csv(out_ssim, encoding="utf-8")
 
     shutil.rmtree(temp_dir, ignore_errors=True)
+
+    full_time = time.time() - full_start
+    print(f"Run time: {run_time} seconds")
+    print(f"Total time: {full_time} seconds")
 
     return tgt_aligned_list, shifts
 
