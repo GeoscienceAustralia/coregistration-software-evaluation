@@ -376,6 +376,7 @@ def downsample_dataset(
     enhance_function=None,
     force_shape: tuple = (),  # (height, width)
     readjust_origin: bool = False,
+    round_resolution: bool = False,
 ):
     """
     Downsamples the output data and returns the new downsampled data and its new affine transformation according to `scale_factor`
@@ -407,6 +408,16 @@ def downsample_dataset(
         transform = dataset.transform * dataset.transform.scale(
             (dataset.width / data.shape[-1]), (dataset.height / data.shape[-2])
         )
+
+        if round_resolution:
+            transform = rasterio.Affine(
+                np.round(transform.a).tolist(),
+                transform.b,
+                transform.c,
+                transform.d,
+                np.round(transform.e).tolist(),
+                transform.f,
+            )
 
         if len(force_shape) != 0:
             scale_factor = [
@@ -1275,6 +1286,7 @@ def find_corrs_shifts(
     signal_power_thresh: float = 0.9,
     drop_unbound: bool = True,
     invert_points: bool = True,
+    valid_num_points=10,
 ) -> tuple:
 
     ref_points_temp = ref_points.copy().astype("int")
@@ -1310,9 +1322,10 @@ def find_corrs_shifts(
 
     valid_idx = np.where(np.array(corrs) > signal_power_thresh)
 
-    if len(valid_idx[0]) == 0:
+    if len(valid_idx[0]) < valid_num_points:
+        has_s = " was" if len(valid_idx[0]) == 1 else "s were"
         print(
-            "WARNING: No points were found with the given correlation threshold, turning off phase correlation filter..."
+            f"WARNING: {len(valid_idx[0])} point{has_s} found with the given correlation threshold (fewer than accepted {valid_num_points}), turning off phase correlation filter..."
         )
         return ref_points, tgt_points
 
@@ -1406,9 +1419,10 @@ def co_register(
     generate_csv: bool = True,
     fps: int = 3,
     of_dist_thresh: Union[None, int, float] = 2,  # pixels
-    phase_corr_filter: bool = False,
+    phase_corr_filter: bool = True,
     phase_corr_signal_thresh: float = 0.9,
-    use_overlap: bool = False,
+    pahse_corr_valid_num_points=10,
+    use_overlap: bool = True,
     rethrow_error: bool = False,
     resampling_resolution: str = "lower",
     return_shifted_images: bool = False,
@@ -1648,6 +1662,7 @@ def co_register(
                     tgt_good_temp,
                     of_params["lk_params"]["winSize"],
                     phase_corr_signal_thresh,
+                    valid_num_points=pahse_corr_valid_num_points,
                 )
 
             shift_x, shift_y = np.mean(ref_good_temp - tgt_good_temp, axis=0)
