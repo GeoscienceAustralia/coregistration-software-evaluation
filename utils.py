@@ -37,6 +37,8 @@ from typing import Literal
 from datetime import datetime
 from datetime import timedelta
 import time
+import asyncio
+import nest_asyncio
 
 
 def get_sentinel_filenames(
@@ -2352,11 +2354,11 @@ def get_pair_dict(
     if time_distance not in ["closest", "farthest"]:
         raise ValueError("time distance options are only closest or farthest")
 
-    scene_dates = list(data.keys())
+    scene_dates = sorted(list(data.keys()))
     try:
-        reference_date_idx = [reference_month in date for date in scene_dates].index(
-            True
-        )
+        reference_date_idx = [
+            reference_month in date[-2:] for date in scene_dates
+        ].index(True)
         reference_date = scene_dates[reference_date_idx]
     except:
         raise Exception(
@@ -2540,3 +2542,60 @@ def generate_results_from_raw_inputs(
     out_ssim_df.to_csv(output_path, encoding="utf-8")
 
     return None
+
+
+def download(
+    chunk: tuple,
+    bucket: str,
+    s3_client: boto3.client,
+):
+    tasks = []
+    for url, path in zip(*chunk):
+        print(f"downloading {os.path.basename(path)}")
+        item = "/".join(url.split("/")[3:])
+        if not os.path.exists(path):
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            tasks.append(
+                s3_client.download_file(
+                    bucket, item, path, {"RequestPayer": "requester"}
+                )
+            )
+        else:
+            print(f"{os.path.basename(path)} already exists")
+            continue
+    return tasks
+
+
+async def async_download(
+    chunk: tuple,
+    bucket: str,
+    s3_client: boto3.client,
+):
+    tasks = download(chunk, bucket, s3_client)
+    await asyncio.gather(*tasks)
+
+
+def download_files(
+    bucket_name: str,
+    s3_urls: str,
+    local_paths: str,
+    num_tasks: int = 8,
+    is_async_download: bool = False,
+):
+    """
+    Download files from S3 bucket using multiple processes.
+    """
+    s3_client = boto3.client("s3")
+
+    download_list_chunk = (
+        [(s3_urls[i::num_tasks], local_paths[i::num_tasks]) for i in range(num_tasks)]
+        if num_tasks != -1
+        else [(s3_urls, local_paths)]
+    )
+
+    for i, ch in enumerate(download_list_chunk):
+        if is_async_download:
+            asyncio.run(async_download(ch, bucket_name, s3_client))
+        else:
+            download(ch, bucket_name, s3_client)
+        print(f"Chunk {i + 1} downloaded")
