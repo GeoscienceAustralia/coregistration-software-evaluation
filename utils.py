@@ -41,6 +41,7 @@ import asyncio
 from subprocess import run
 import shlex
 from arosics import COREG_LOCAL
+from cv2 import Sobel
 
 
 def get_sentinel_filenames(
@@ -2088,9 +2089,12 @@ def get_search_query(
 def make_true_color_scene(
     dataset_paths: list[str],
     output_path: str | None = None,
-    enhance: bool = False,
+    gamma: float = 1.0,
+    equalise_histogram: bool = False,
+    stretch_contrast: bool = False,
     gray_scale: bool = False,
     averaging: bool = False,
+    edge_detection: bool = False,
 ) -> np.ndarray:
     red = dataset_paths[0]
     green = dataset_paths[1]
@@ -2120,8 +2124,9 @@ def make_true_color_scene(
         else:
             img = cv.cvtColor(img, cv.COLOR_BGR2GRAY)
 
-    if enhance:
-        img = apply_gamma(img, 1.0, True)
+    img = apply_gamma(img, gamma, stretch_contrast, equalise_histogram)
+    if edge_detection:
+        img = sobel_edge_detector(img)
 
     if output_path is not None:
         with rasterio.open(output_path, "w", **profile) as ds:
@@ -2778,3 +2783,120 @@ def arosics(
     full_time = time.time() - full_start
     print(f"Run time: {run_time} seconds")
     print(f"Total time: {full_time} seconds")
+
+
+def sobel_edge_detector(img):
+    grad_x = cv.Sobel(img, cv.CV_64F, 1, 0)
+    grad_y = cv.Sobel(img, cv.CV_64F, 0, 1)
+    grad = np.sqrt(grad_x**2 + grad_y**2)
+    grad_norm = (grad * 255 / grad.max()).astype(np.uint8)
+    return grad_norm
+
+
+def download_and_process_pairs(
+    data_dict: dict,
+    rgb_channels: list[str],
+    output_dir: str,
+    aws_session: rasterio.session.AWSSession | None = None,
+    keep_original_band_scenes: bool = False,
+    reference_month: str = "01",
+    edge_detection: bool = False,
+    gamma: float = 1.0,
+    equalise_histogram: bool = False,
+    stretch_contrast: bool = False,
+    gray_scale: bool = False,
+    averaging: bool = False,
+):
+    os.makedirs(output_dir, exist_ok=True)
+
+    date = list(data_dict.keys())[0]
+
+    r_url = data_dict[date][0][rgb_channels[0]]
+    g_url = data_dict[date][0][rgb_channels[1]]
+    b_url = data_dict[date][0][rgb_channels[2]]
+
+    r_band_suffix = os.path.splitext(os.path.basename(r_url))[0].split("_")[-1]
+    g_band_suffix = os.path.splitext(os.path.basename(g_url))[0].split("_")[-1]
+    b_band_suffix = os.path.splitext(os.path.basename(b_url))[0].split("_")[-1]
+
+    true_color_dir = f"{output_dir}/true_color"
+    os.makedirs(true_color_dir, exist_ok=True)
+
+    true_color_ds_dir = f"{output_dir}/true_color_ds"
+    os.makedirs(true_color_ds_dir, exist_ok=True)
+
+    closest_pair = get_pair_dict(data_dict, "closest", reference_month=reference_month)
+    farthest_pair = get_pair_dict(
+        data_dict, "farthest", reference_month=reference_month
+    )
+
+    pr_date_list = closest_pair + [farthest_pair[1]]
+    for j, el in enumerate(pr_date_list):
+        print(
+            f"Now downloading and processing pairs for {el['scene_name']} and path_row: {pr}, scene {j + 1} of 3.",
+            end="\r",
+        )
+        r_url = el[rgb_channels[0] + "_alternate"]
+        g_url = el[rgb_channels[1] + "_alternate"]
+        b_url = el[rgb_channels[2] + "_alternate"]
+        originals_dir = f"{output_dir}/Originals/{el['scene_name']}"
+        os.makedirs(originals_dir, exist_ok=True)
+        r_output = os.path.join(originals_dir, os.path.basename(r_url))
+        g_output = os.path.join(originals_dir, os.path.basename(g_url))
+        b_output = os.path.join(originals_dir, os.path.basename(b_url))
+        r_img, r_meta = stream_scene_from_aws(r_url, aws_session)
+        g_img, g_meta = stream_scene_from_aws(g_url, aws_session)
+        b_img, b_meta = stream_scene_from_aws(b_url, aws_session)
+
+        imgs = [r_img, g_img, b_img]
+        outputs = [r_output, g_output, b_output]
+        metas = [r_meta, g_meta, b_meta]
+        for i, img in enumerate(imgs):
+            with rasterio.open(outputs[i], "w", **metas[i]["profile"]) as ds:
+                ds.write(img[0, :, :], 1)
+
+        files = glob.glob(f"{originals_dir}/**")
+        r_band = list(filter(lambda f: f.endswith(f"_{r_band_suffix}.TIF"), files))[0]
+        g_band = list(filter(lambda f: f.endswith(f"_{g_band_suffix}.TIF"), files))[0]
+        b_band = list(filter(lambda f: f.endswith(f"_{b_band_suffix}.TIF"), files))[0]
+        true_bands = [r_band, g_band, b_band]
+        tc_file = (
+            f"{os.path.join(true_color_dir, os.path.basename(originals_dir))}_TC.TIF"
+        )
+        tc_file_ds = os.path.join(true_color_ds_dir, os.path.basename(tc_file))
+        make_true_color_scene(
+            true_bands,
+            tc_file,
+            gamma,
+            equalise_histogram,
+            stretch_contrast,
+            gray_scale,
+            averaging,
+            edge_detection,
+        )
+        downsample_dataset(tc_file, 0.2, tc_file_ds)
+
+        el["local_path"] = tc_file
+        el["local_path_ds"] = tc_file_ds
+
+        if not keep_original_band_scenes:
+            shutil.rmtree(
+                f"{output_dir}/Originals",
+                ignore_errors=True,
+            )
+
+    cols = ["Reference", "Closest_target", "Farthest_target"]
+    df = pd.DataFrame(
+        {
+            cols[i]: [
+                el["local_path"],
+                el["local_path_ds"],
+            ]
+            for i, el in enumerate(pr_date_list)
+        },
+        columns=cols,
+    )
+    df.to_csv(
+        f"{output_dir}/pairs.csv",
+        index=False,
+    )
