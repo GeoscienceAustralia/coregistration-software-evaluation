@@ -38,7 +38,9 @@ from datetime import datetime
 from datetime import timedelta
 import time
 import asyncio
-import nest_asyncio
+from subprocess import run
+import shlex
+from arosics import COREG_LOCAL
 
 
 def get_sentinel_filenames(
@@ -2614,3 +2616,165 @@ def download_files(
         else:
             download(ch, bucket_name, s3_client)
         print(f"Chunk {i + 1} downloaded")
+
+
+def karios(
+    ref_image: str,
+    tgt_images: list[str],
+    output_dir: str,
+    karios_executable: str,
+) -> dict:
+    os.makedirs(output_dir, exist_ok=True)
+    tgt_images_copy = tgt_images.copy()
+    run_start = full_start = time.time()
+    temp_dir = os.path.join(output_dir, "temp")
+    os.makedirs(temp_dir, exist_ok=True)
+    ref_profile = rasterio.open(ref_image).profile
+    tgt_profiles = [rasterio.open(t).profile for t in tgt_images_copy]
+    for i, tgt_profile in enumerate(tgt_profiles):
+        downsample = False
+        if tgt_profile["height"] != ref_profile["height"]:
+            print(
+                f"Target image {tgt_images_copy[i]} has different height than reference image {ref_image}"
+            )
+            downsample = True
+        if tgt_profile["width"] != ref_profile["width"]:
+            print(
+                f"Target image {tgt_images_copy[i]} has different width than reference image {ref_image}"
+            )
+            downsample = True
+        if downsample:
+            downsample_dataset(
+                tgt_images_copy[i],
+                force_shape=(ref_profile["height"], ref_profile["width"]),
+                output_file=f"{output_dir}/temp/{os.path.basename(tgt_images_copy[i])}",
+            )
+            tgt_images_copy[i] = (
+                f"{output_dir}/temp/{os.path.basename(tgt_images_copy[i])}"
+            )
+
+    log_file = f"{output_dir}/karios.log"
+    if os.path.isfile(log_file):
+        os.remove(log_file)
+    for i, tgt_image in enumerate(tgt_images_copy):
+        try:
+            cmd = f"python {karios_executable} --out {output_dir} --log-file-path {log_file} {tgt_image} {ref_image}"
+            print(f"Running {cmd}")
+            run(shlex.split(cmd))
+        except Exception as e:
+            print(f"Error running karios for {tgt_image}: {e}")
+            continue
+
+    shutil.rmtree(temp_dir, ignore_errors=True)
+    tgt_images_copy = tgt_images.copy()
+    process_ids = {}
+    for i, tgt in enumerate(tgt_images_copy):
+        process_ids[os.path.basename(tgt)] = i
+
+    scene_names = []
+    shifts = []
+    for tgt_image in tgt_images_copy:
+        line_found = False
+        with open(log_file, "r") as f:
+            for line in f:
+                if (os.path.basename(tgt_image) in line) and ("Process" in line):
+                    scene_names.append(tgt_image)
+                    line_found = True
+                if line_found:
+                    if "DX/DY(KLT) MEAN" in line:
+                        splits = line.strip().split(" ")
+                        shifts.append([float(splits[-3]), float(splits[-1])])
+                        break
+
+    shifts_dict = {}
+    for f, sh in zip(scene_names, shifts):
+        shifts_dict[f] = sh
+
+    print(shifts_dict)
+
+    os.makedirs(f"{output_dir}/Aligned", exist_ok=True)
+    processed_output_images = []
+    for key in list(shifts_dict.keys()):
+        output_path = os.path.join(f"{output_dir}/Aligned", os.path.basename(key))
+        shift_x, shift_y = shifts_dict[key]
+        warp_affine_dataset(
+            key, output_path, translation_x=shift_x, translation_y=shift_y
+        )
+        processed_output_images.append(output_path)
+
+    run_time = time.time() - run_start
+    generate_results_from_raw_inputs(
+        ref_image,
+        processed_output_images,
+        output_dir=output_dir,
+    )
+    full_time = time.time() - full_start
+    print(f"Run time: {run_time} seconds")
+    print(f"Total time: {full_time} seconds")
+
+    return shifts_dict
+
+
+def arosics(
+    ref_image: str,
+    tgt_images: list[str],
+    output_dir: str,
+    max_points: int = None,
+    r_b4match: int = 1,
+    s_b4match: int = 1,
+    max_iter: int = 5,
+    max_shift: int = 5,
+    grid_res: int = 250,
+    min_reliability: int = 30,
+):
+    os.makedirs(output_dir, exist_ok=True)
+    run_start = full_start = time.time()
+    tgt_images_copy = tgt_images.copy()
+    local_outputs = [
+        os.path.join(
+            f"{output_dir}/Aligned",
+            os.path.basename(tgt),
+        )
+        for tgt in tgt_images_copy
+    ]
+    os.makedirs(f"{output_dir}/Aligned", exist_ok=True)
+
+    processed_output_images = []
+    print(f"Reference image: {ref_image}")
+    for i, tgt_image in enumerate(tgt_images_copy):
+        print(f"Coregistering {tgt_image}")
+        coreg_local = COREG_LOCAL(
+            im_ref=ref_image,
+            im_tgt=tgt_image,
+            grid_res=grid_res,
+            max_points=max_points,
+            path_out=local_outputs[i],
+            fmt_out="GTIFF",
+            nodata=(0.0, 0.0),
+            r_b4match=r_b4match,
+            s_b4match=s_b4match,
+            align_grids=True,
+            max_iter=max_iter,
+            max_shift=max_shift,
+            ignore_errors=True,
+            min_reliability=min_reliability,
+        )
+        coreg_local.correct_shifts()
+        if not coreg_local.success:
+            print(
+                f"Coregistration not successfull for {tgt_image}. Removing the corresponding output: {local_outputs[i]}"
+            )
+            if os.path.isfile(local_outputs[i]):
+                os.remove(local_outputs[i])
+        else:
+            processed_output_images.append(local_outputs[i])
+
+    run_time = time.time() - run_start
+    generate_results_from_raw_inputs(
+        ref_image,
+        processed_output_images,
+        output_dir=output_dir,
+    )
+    full_time = time.time() - full_start
+    print(f"Run time: {run_time} seconds")
+    print(f"Total time: {full_time} seconds")
