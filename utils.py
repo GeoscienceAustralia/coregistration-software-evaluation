@@ -2095,6 +2095,7 @@ def make_true_color_scene(
     gray_scale: bool = False,
     averaging: bool = False,
     edge_detection: bool = False,
+    edge_detection_mode: Literal["sobel", "laplacian"] = "sobel",
 ) -> np.ndarray:
     red = dataset_paths[0]
     green = dataset_paths[1]
@@ -2126,7 +2127,7 @@ def make_true_color_scene(
 
     img = apply_gamma(img, gamma, stretch_contrast, equalise_histogram)
     if edge_detection:
-        img = sobel_edge_detector(img)
+        img = edge_detector(img, edge_detection_mode)
 
     if output_path is not None:
         with rasterio.open(output_path, "w", **profile) as ds:
@@ -2695,8 +2696,6 @@ def karios(
     for f, sh in zip(scene_names, shifts):
         shifts_dict[f] = sh
 
-    print(shifts_dict)
-
     os.makedirs(f"{output_dir}/Aligned", exist_ok=True)
     processed_output_images = []
     for key in list(shifts_dict.keys()):
@@ -2785,12 +2784,17 @@ def arosics(
     print(f"Total time: {full_time} seconds")
 
 
-def sobel_edge_detector(img):
-    grad_x = cv.Sobel(img, cv.CV_64F, 1, 0)
-    grad_y = cv.Sobel(img, cv.CV_64F, 0, 1)
-    grad = np.sqrt(grad_x**2 + grad_y**2)
-    grad_norm = (grad * 255 / grad.max()).astype(np.uint8)
-    return grad_norm
+def edge_detector(
+    img, mode: Literal["sobel", "laplacian"] = "sobel", laplacian_kernel_size: int = 5
+) -> np.ndarray:
+    if mode == "laplacian":
+        edges = cv.Laplacian(img, cv.CV_8U, ksize=laplacian_kernel_size)
+    else:
+        grad_x = cv.Sobel(img, cv.CV_64F, 1, 0)
+        grad_y = cv.Sobel(img, cv.CV_64F, 0, 1)
+        grad = np.sqrt(grad_x**2 + grad_y**2)
+        edges = (grad * 255 / grad.max()).astype(np.uint8)
+    return edges
 
 
 def download_and_process_pairs(
@@ -2801,6 +2805,7 @@ def download_and_process_pairs(
     keep_original_band_scenes: bool = False,
     reference_month: str = "01",
     edge_detection: bool = False,
+    edge_detection_mode: Literal["sobel", "laplacian"] = "sobel",
     gamma: float = 1.0,
     equalise_histogram: bool = False,
     stretch_contrast: bool = False,
@@ -2833,7 +2838,7 @@ def download_and_process_pairs(
     pr_date_list = closest_pair + [farthest_pair[1]]
     for j, el in enumerate(pr_date_list):
         print(
-            f"Now downloading and processing pairs for {el['scene_name']} and path_row: {pr}, scene {j + 1} of 3.",
+            f"Now downloading and processing pairs for {el['scene_name']} and path_row: {output_dir.split("_")[-1]}, scene {j + 1} of 3.",
             end="\r",
         )
         r_url = el[rgb_channels[0] + "_alternate"]
@@ -2873,6 +2878,7 @@ def download_and_process_pairs(
             gray_scale,
             averaging,
             edge_detection,
+            edge_detection_mode,
         )
         downsample_dataset(tc_file, 0.2, tc_file_ds)
 
