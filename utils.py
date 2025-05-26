@@ -2353,7 +2353,7 @@ def get_pair_dict(
     time_distance: str = Literal["closest", "farthest"],
     reference_month: str = "01",
 ) -> list:
-    """Finds the closest or farthest member of the given scene dictionary in time in it to a given reference scence.
+    """Finds the closest or farthest member of the given scene dictionary in time in it to a given reference scence found automatically in the data using the reference month.
 
     Parameters
     ----------
@@ -2443,6 +2443,34 @@ def get_pair_dict(
                 raise Exception("Duplicate times were found in the data.")
         else:
             raise Exception("Not enough scenes in the provided dataset.")
+
+
+def get_pair_dict_alternate(
+    data_1: dict,
+    data_2: dict,
+    time_distance: str = Literal["closest", "farthest"],
+    reference_month_1: str = "01",
+    reference_month_2: str = "01",
+    reference_dict: int = 1,
+) -> list:
+    pair_1 = get_pair_dict(
+        data_1,
+        time_distance=time_distance,
+        reference_month=reference_month_1,
+    )
+    pair_2 = get_pair_dict(
+        data_2,
+        time_distance=time_distance,
+        reference_month=reference_month_2,
+    )
+    if reference_dict == 1:
+        return [pair_1[0], pair_2[1]]
+    elif reference_dict == 2:
+        return [pair_2[0], pair_1[1]]
+    else:
+        raise ValueError(
+            "reference_dict should be either 1 or 2, where 1 is the first dict and 2 is the second dict."
+        )
 
 
 def combine_scene_dicts(scene_dicts=list[dict]) -> dict:
@@ -2798,12 +2826,12 @@ def edge_detector(
 
 
 def download_and_process_pairs(
-    data_dict: dict,
+    data: dict | list,
     rgb_channels: list[str],
     output_dir: str,
     aws_session: rasterio.session.AWSSession | None = None,
     keep_original_band_scenes: bool = False,
-    reference_month: str = "01",
+    reference_month: str | list = "01",
     edge_detection: bool = False,
     edge_detection_mode: Literal["sobel", "laplacian"] = "sobel",
     gamma: float = 1.0,
@@ -2814,11 +2842,13 @@ def download_and_process_pairs(
 ):
     os.makedirs(output_dir, exist_ok=True)
 
-    date = list(data_dict.keys())[0]
+    date_dict = data[0] if type(data) == list else data
 
-    r_url = data_dict[date][0][rgb_channels[0]]
-    g_url = data_dict[date][0][rgb_channels[1]]
-    b_url = data_dict[date][0][rgb_channels[2]]
+    date = list(date_dict.keys())[0]
+
+    r_url = date_dict[date][0][rgb_channels[0]]
+    g_url = date_dict[date][0][rgb_channels[1]]
+    b_url = date_dict[date][0][rgb_channels[2]]
 
     r_band_suffix = os.path.splitext(os.path.basename(r_url))[0].split("_")[-1]
     g_band_suffix = os.path.splitext(os.path.basename(g_url))[0].split("_")[-1]
@@ -2830,15 +2860,39 @@ def download_and_process_pairs(
     true_color_ds_dir = f"{output_dir}/true_color_ds"
     os.makedirs(true_color_ds_dir, exist_ok=True)
 
-    closest_pair = get_pair_dict(data_dict, "closest", reference_month=reference_month)
-    farthest_pair = get_pair_dict(
-        data_dict, "farthest", reference_month=reference_month
-    )
+    if type(data) == list and type(reference_month) == str:
+        reference_month = [reference_month] * len(data)
+
+    if type(data) == list:
+        closest_pair = get_pair_dict_alternate(
+            data[0],
+            data[1],
+            "closest",
+            reference_month_1=reference_month[0],
+            reference_month_2=reference_month[1],
+        )
+        farthest_pair = get_pair_dict_alternate(
+            data[0],
+            data[1],
+            "farthest",
+            reference_month_1=reference_month[0],
+            reference_month_2=reference_month[1],
+        )
+    else:
+        closest_pair = get_pair_dict(data, "closest", reference_month=reference_month)
+        farthest_pair = get_pair_dict(data, "farthest", reference_month=reference_month)
 
     pr_date_list = closest_pair + [farthest_pair[1]]
+    output_splits = output_dir.split("_")
     for j, el in enumerate(pr_date_list):
+        path_row = ""
+        for s in output_splits:
+            if f"_{s}_" in el["scene_name"]:
+                path_row = s
+                break
+        path_row_str = f" and path_row: {path_row}" if path_row else ""
         print(
-            f"Now downloading and processing pairs for {el['scene_name']} and path_row: {output_dir.split("_")[-1]}, scene {j + 1} of 3.",
+            f"Now downloading and processing pairs for {el['scene_name']}{path_row_str}, scene {j + 1} of 3.",
             end="\r",
         )
         r_url = el[rgb_channels[0] + "_alternate"]
