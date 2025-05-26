@@ -2096,28 +2096,41 @@ def make_true_color_scene(
     averaging: bool = False,
     edge_detection: bool = False,
     edge_detection_mode: Literal["sobel", "laplacian"] = "sobel",
+    post_process_only: bool = False,
 ) -> np.ndarray:
-    red = dataset_paths[0]
-    green = dataset_paths[1]
-    blue = dataset_paths[2]
-    profile = rasterio.open(red).profile
-    if not gray_scale:
-        profile["count"] = 3
-    profile["dtype"] = "uint8"
+    """
+    Creates a true color scene from three bands (red, green, blue) of a dataset.
+    If `post_process_only` is True, it will only apply post-processing without reading the bands.
+    """
+    if post_process_only:
+        if output_path is None:
+            raise ValueError("Output path must be provided for post-processing only.")
+        if not os.path.isfile(output_path):
+            raise FileNotFoundError(f"Output file {output_path} does not exist.")
+        profile = rasterio.open(output_path).profile
+        img = flip_img(rasterio.open(output_path).read())
+    else:
+        red = dataset_paths[0]
+        green = dataset_paths[1]
+        blue = dataset_paths[2]
+        profile = rasterio.open(red).profile
+        if not gray_scale:
+            profile["count"] = 3
+        profile["dtype"] = "uint8"
 
-    reds = rasterio.open(red).read(1)
-    if reds.dtype == "uint16":
-        reds = np.clip(reds / 256, 0, 255).astype("uint8")
+        reds = rasterio.open(red).read(1)
+        if reds.dtype == "uint16":
+            reds = np.clip(reds / 256, 0, 255).astype("uint8")
 
-    greens = rasterio.open(green).read(1)
-    if greens.dtype == "uint16":
-        greens = np.clip(greens / 256, 0, 255).astype("uint8")
+        greens = rasterio.open(green).read(1)
+        if greens.dtype == "uint16":
+            greens = np.clip(greens / 256, 0, 255).astype("uint8")
 
-    blues = rasterio.open(blue).read(1)
-    if blues.dtype == "uint16":
-        blues = np.clip(blues / 256, 0, 255).astype("uint8")
+        blues = rasterio.open(blue).read(1)
+        if blues.dtype == "uint16":
+            blues = np.clip(blues / 256, 0, 255).astype("uint8")
 
-    img = cv.merge([reds, greens, blues])
+        img = cv.merge([reds, greens, blues])
 
     if gray_scale:
         if averaging:
@@ -2899,6 +2912,24 @@ def download_and_process_pairs(
         g_url = el[rgb_channels[1] + "_alternate"]
         b_url = el[rgb_channels[2] + "_alternate"]
         originals_dir = f"{output_dir}/Originals/{el['scene_name']}"
+
+        tc_file = (
+            f"{os.path.join(true_color_dir, os.path.basename(originals_dir))}_TC.TIF"
+        )
+        post_process_only = False
+        if os.path.isfile(tc_file):
+            print(f"True color scene {tc_file} already exists, skipping.")
+            el["local_path"] = tc_file
+            el["local_path_ds"] = tc_file
+            if (
+                (not edge_detection)
+                and (not equalise_histogram)
+                and (not stretch_contrast)
+            ):
+                continue
+            else:
+                post_process_only = True
+
         os.makedirs(originals_dir, exist_ok=True)
         r_output = os.path.join(originals_dir, os.path.basename(r_url))
         g_output = os.path.join(originals_dir, os.path.basename(g_url))
@@ -2919,9 +2950,6 @@ def download_and_process_pairs(
         g_band = list(filter(lambda f: f.endswith(f"_{g_band_suffix}.TIF"), files))[0]
         b_band = list(filter(lambda f: f.endswith(f"_{b_band_suffix}.TIF"), files))[0]
         true_bands = [r_band, g_band, b_band]
-        tc_file = (
-            f"{os.path.join(true_color_dir, os.path.basename(originals_dir))}_TC.TIF"
-        )
         tc_file_ds = os.path.join(true_color_ds_dir, os.path.basename(tc_file))
         make_true_color_scene(
             true_bands,
@@ -2933,6 +2961,7 @@ def download_and_process_pairs(
             averaging,
             edge_detection,
             edge_detection_mode,
+            post_process_only,
         )
         downsample_dataset(tc_file, 0.2, tc_file_ds)
 
