@@ -1306,8 +1306,17 @@ def find_corrs_shifts(
         final_tgt_cells = tgt_cells
 
     corrs = []
+    warning = False
     for ref, tgt in zip(final_ref_cells, final_tgt_cells):
-        corrs.append(cv.phaseCorrelate(np.float32(tgt), np.float32(ref), None)[1])
+        try:
+            corrs.append(cv.phaseCorrelate(np.float32(tgt), np.float32(ref), None)[1])
+        except Exception as e:
+            warning = True
+
+    if warning:
+        print(
+            "WARNING: Phase correlation failed for some of the cells. This might be due to the size of the cells or the image data type."
+        )
 
     valid_idx = np.where(np.array(corrs) > signal_power_thresh)
 
@@ -2876,6 +2885,8 @@ def download_and_process_pairs(
     g_band_suffix = os.path.splitext(os.path.basename(g_url))[0].split("_")[-1]
     b_band_suffix = os.path.splitext(os.path.basename(b_url))[0].split("_")[-1]
 
+    ext = os.path.splitext(os.path.basename(r_url))[1]
+
     true_color_dir = f"{output_dir}/true_color"
     os.makedirs(true_color_dir, exist_ok=True)
 
@@ -2923,7 +2934,7 @@ def download_and_process_pairs(
         originals_dir = f"{output_dir}/Originals/{el['scene_name']}"
 
         tc_file = (
-            f"{os.path.join(true_color_dir, os.path.basename(originals_dir))}_TC.TIF"
+            f"{os.path.join(true_color_dir, os.path.basename(originals_dir))}_TC{ext}"
         )
         post_process_only = False
         if os.path.isfile(tc_file):
@@ -2943,9 +2954,19 @@ def download_and_process_pairs(
         r_output = os.path.join(originals_dir, os.path.basename(r_url))
         g_output = os.path.join(originals_dir, os.path.basename(g_url))
         b_output = os.path.join(originals_dir, os.path.basename(b_url))
-        r_img, r_meta = stream_scene_from_aws(r_url, aws_session)
-        g_img, g_meta = stream_scene_from_aws(g_url, aws_session)
-        b_img, b_meta = stream_scene_from_aws(b_url, aws_session)
+
+        if (
+            os.path.isfile(r_output)
+            and os.path.isfile(g_output)
+            and os.path.isfile(b_output)
+        ):
+            print(
+                f"Original bands {r_output}, {g_output}, {b_output} already exist, skipping."
+            )
+        else:
+            r_img, r_meta = stream_scene_from_aws(r_url, aws_session)
+            g_img, g_meta = stream_scene_from_aws(g_url, aws_session)
+            b_img, b_meta = stream_scene_from_aws(b_url, aws_session)
 
         imgs = [r_img, g_img, b_img]
         outputs = [r_output, g_output, b_output]
@@ -2955,9 +2976,9 @@ def download_and_process_pairs(
                 ds.write(img[0, :, :], 1)
 
         files = glob.glob(f"{originals_dir}/**")
-        r_band = list(filter(lambda f: f.endswith(f"_{r_band_suffix}.TIF"), files))[0]
-        g_band = list(filter(lambda f: f.endswith(f"_{g_band_suffix}.TIF"), files))[0]
-        b_band = list(filter(lambda f: f.endswith(f"_{b_band_suffix}.TIF"), files))[0]
+        r_band = list(filter(lambda f: f.endswith(f"{r_band_suffix}{ext}"), files))[0]
+        g_band = list(filter(lambda f: f.endswith(f"{g_band_suffix}{ext}"), files))[0]
+        b_band = list(filter(lambda f: f.endswith(f"{b_band_suffix}{ext}"), files))[0]
         true_bands = [r_band, g_band, b_band]
         tc_file_ds = os.path.join(true_color_ds_dir, os.path.basename(tc_file))
         make_true_color_scene(
