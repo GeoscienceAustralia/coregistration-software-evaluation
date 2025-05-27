@@ -1948,12 +1948,12 @@ def find_scenes_dict(
                 if "alternate" in assets[s]:
                     url_alternate = assets[s]["alternate"]["s3"]["href"]
                 else:
-                    url_alternate = None
+                    url_alternate = url
 
                 scene_dict[id][s] = url
                 scene_dict[id][f"{s}_alternate"] = url_alternate
 
-    if "landsat:scene_id" in features[0]["properties"]:
+    if "landsat:scene_id" in features[0].to_dict()["properties"]:
         path_rows = [k.split("_")[2] for k in scene_dict]
         time_ind = 3
     else:
@@ -2056,8 +2056,8 @@ def get_search_query(
         platform = None
         collection_category = None
         cloud_cover = None
-    else:
-        query["query"] = {}
+
+    query["query"] = {}
     if platform is not None:
         query["query"] = query["query"] | {
             "platform": {"in": platform if type(platform) is list else [platform]}
