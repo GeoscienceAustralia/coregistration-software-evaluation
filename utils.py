@@ -41,7 +41,7 @@ import asyncio
 from subprocess import run
 import shlex
 from arosics import COREG_LOCAL
-from cv2 import Sobel
+from cv2 import Sobel, Laplacian, Canny
 
 
 def get_sentinel_filenames(
@@ -1247,20 +1247,6 @@ def warp_affine_dataset(
     return warped_img
 
 
-def detect_edges(img):
-    """
-    simple canny edge detector
-    """
-    out = cv.Canny(img, 100, 200)
-    kernel = np.ones((3, 3), np.uint8)
-    out = cv.dilate(out, kernel, iterations=2)
-    out = cv.erode(out, kernel, iterations=3)
-    kernel = np.ones((15, 15), np.uint8)
-    out = cv.morphologyEx(out, cv.MORPH_CLOSE, kernel, iterations=10)
-    out = cv.Canny(out, 0, 255)
-    return out
-
-
 def find_cells(img, points, window_size, invert_points=False):
     if invert_points:
         points = np.column_stack([points[:, 1], points[:, 0]])
@@ -1568,6 +1554,8 @@ def co_register(
 
     ref_imgs_temp = []
     if laplacian_kernel_size is not None:
+        print("Applying Laplacian filter to images.")
+    if laplacian_kernel_size is not None:
         if use_overlap:
             for ref_img in ref_imgs:
                 ref_imgs_temp.append(
@@ -1658,6 +1646,9 @@ def co_register(
             tgt_good_temp = tgt_good_temp[inliers.ravel().astype(bool)]
 
             if phase_corr_filter:
+                print(
+                    f"Applying phase correlation filter for target {i} ({os.path.basename(targets[i])})"
+                )
                 ref_good_temp, tgt_good_temp = find_corrs_shifts(
                     ref_img,
                     tgt_img,
@@ -2048,7 +2039,7 @@ def get_search_query(
     bbox: Union[list, BoundingBox],
     collections: list[str] | None = ["landsat-c2l2-sr", "landsat-c2l2-st"],
     collection_category: list[str] | None = ["T1", "T2", "RT"],
-    platform: str | None = "LANDSAT_8",
+    platform: str | list | None = "LANDSAT_8",
     start_date: str = "2014-10-30T00:00:00",
     end_date: str = "2015-01-23T23:59:59",
     cloud_cover: int | None = 80,
@@ -2068,7 +2059,9 @@ def get_search_query(
     else:
         query["query"] = {}
     if platform is not None:
-        query["query"] = query["query"] | {"platform": {"in": [platform]}}
+        query["query"] = query["query"] | {
+            "platform": {"in": platform if type(platform) is list else [platform]}
+        }
     if collections is not None:
         query["collections"] = collections
     if collection_category is not None:
@@ -2826,15 +2819,31 @@ def arosics(
 
 
 def edge_detector(
-    img, mode: Literal["sobel", "laplacian"] = "sobel", laplacian_kernel_size: int = 5
+    img,
+    mode: Literal["sobel", "laplacian", "canny"] = "sobel",
+    laplacian_kernel_size: int = 5,
+    morphology_kernels: list[tuple[int, int]] | None = [(3, 3), (15, 15)],
 ) -> np.ndarray:
+    """
+    Applies edge detection to the input image using the specified mode."""
     if mode == "laplacian":
-        edges = cv.Laplacian(img, cv.CV_8U, ksize=laplacian_kernel_size)
-    else:
-        grad_x = cv.Sobel(img, cv.CV_64F, 1, 0)
-        grad_y = cv.Sobel(img, cv.CV_64F, 0, 1)
+        edges = Laplacian(img, cv.CV_8U, ksize=laplacian_kernel_size)
+    elif mode == "canny":
+        edges = Canny(img, 100, 200)
+        if morphology_kernels is not None:
+            kernel = np.ones((3, 3), np.uint8)
+            edges = cv.dilate(edges, kernel, iterations=2)
+            edges = cv.erode(edges, kernel, iterations=3)
+            kernel = np.ones((15, 15), np.uint8)
+            edges = cv.morphologyEx(edges, cv.MORPH_CLOSE, kernel, iterations=10)
+            edges = cv.Canny(edges, 0, 255)
+    elif mode == "sobel":
+        grad_x = Sobel(img, cv.CV_64F, 1, 0)
+        grad_y = Sobel(img, cv.CV_64F, 0, 1)
         grad = np.sqrt(grad_x**2 + grad_y**2)
         edges = (grad * 255 / grad.max()).astype(np.uint8)
+    else:
+        raise ValueError("Edge detection mode must be 'sobel', 'laplacian' or 'canny'.")
     return edges
 
 
