@@ -42,6 +42,9 @@ from subprocess import run
 import shlex
 from arosics import COREG_LOCAL
 from cv2 import Sobel, Laplacian, Canny
+import PIL
+
+PIL.Image.MAX_IMAGE_PIXELS = None
 
 
 def get_sentinel_filenames(
@@ -1315,7 +1318,7 @@ def find_corrs_shifts(
 
     if warning:
         print(
-            "WARNING: Phase correlation failed for some of the cells. This might be due to the size of the cells or the image data type."
+            "WARNING: Phase correlation filtering failed for some of the gird cells. This might be due to the size of the cells or the image data type."
         )
 
     valid_idx = np.where(np.array(corrs) > signal_power_thresh)
@@ -1424,7 +1427,8 @@ def co_register(
     rethrow_error: bool = False,
     resampling_resolution: str = "lower",
     return_shifted_images: bool = False,
-    laplacian_kernel_size: Union[None, int] = None,
+    laplacian_kernel_size: Union[None, int, list] = None,
+    laplacian_for_targets_ids: list | None = None,
     lower_of_dist_thresh: Union[None, int, float] = None,
     band_number: Union[None, int] = None,
 ) -> tuple:
@@ -1563,8 +1567,8 @@ def co_register(
 
     ref_imgs_temp = []
     if laplacian_kernel_size is not None:
-        print("Applying Laplacian filter to images.")
-    if laplacian_kernel_size is not None:
+        if laplacian_for_targets_ids is None:
+            laplacian_for_targets_ids = list(range(len(tgt_imgs)))
         if use_overlap:
             for ref_img in ref_imgs:
                 ref_imgs_temp.append(
@@ -1575,14 +1579,19 @@ def co_register(
             ref_imgs_temp = None
         else:
             grey_ref = ref_img.copy()
-            ref_img = cv.Laplacian(ref_img, cv.CV_8U, ksize=laplacian_kernel_size)
+            ref_img_laplacian = cv.Laplacian(
+                ref_img, cv.CV_8U, ksize=laplacian_kernel_size
+            )
 
     tgt_imgs_temp = []
     if laplacian_kernel_size is not None:
-        for tgt_img in tgt_imgs:
-            tgt_imgs_temp.append(
-                cv.Laplacian(tgt_img, cv.CV_8U, ksize=laplacian_kernel_size)
-            )
+        for i, tgt_img in enumerate(tgt_imgs):
+            if i in laplacian_for_targets_ids:
+                tgt_imgs_temp.append(
+                    cv.Laplacian(tgt_img, cv.CV_8U, ksize=laplacian_kernel_size)
+                )
+            else:
+                tgt_imgs_temp.append(tgt_img.copy())
         grey_tgts = tgt_imgs.copy()
         tgt_imgs = tgt_imgs_temp.copy()
         tgt_imgs_temp = None
@@ -1614,6 +1623,20 @@ def co_register(
     for i, tgt_img in enumerate(tgt_imgs):
         if use_overlap:
             ref_img = ref_imgs[i]
+
+        if laplacian_kernel_size is not None:
+            if i not in laplacian_for_targets_ids:
+                if use_overlap:
+                    ref_img = grey_refs[i]
+                else:
+                    ref_img = grey_ref
+            else:
+                if use_overlap:
+                    ref_img = ref_imgs[i]
+                else:
+                    ref_img = ref_img_laplacian
+                print("Applying Laplacian filter...")
+
         try:
             p0 = cv.goodFeaturesToTrack(
                 ref_img, mask=None, **of_params["feature_params"]
@@ -1627,6 +1650,11 @@ def co_register(
                 criteria=criteria,
             )
             dist = np.linalg.norm(p1[st == 1] - p0[st == 1], axis=1)
+
+            print(
+                f"For target {i} ({os.path.basename(targets[i])}), found {len(p0[st == 1])} initial features."
+            )
+            print("Filtering features based on distance...")
 
             ref_good, tgt_good = filter_features(
                 p0[st == 1],
@@ -1644,20 +1672,25 @@ def co_register(
                 continue
             if tgt_good.shape[1] < 4:
                 print(
-                    f"""For target {i} ({os.path.basename(targets[i])}), couldn't find enough good features for target or reference. Num features: {tgt_good.shape[0]}"""
+                    f"""For target {i} ({os.path.basename(targets[i])}), couldn't find enough good features for target or reference. Num features: {tgt_good.shape[0]}\n"""
                 )
                 continue
             _, inliers = cv.estimateAffine2D(tgt_good, ref_good)
 
+            print("Applying RANSAC filter....")
             ref_good_temp = ref_good.copy()[0, :, :]
             tgt_good_temp = tgt_good.copy()[0, :, :]
             ref_good_temp = ref_good_temp[inliers.ravel().astype(bool)]
             tgt_good_temp = tgt_good_temp[inliers.ravel().astype(bool)]
 
-            if phase_corr_filter:
+            if len(tgt_good_temp) == 0:
                 print(
-                    f"Applying phase correlation filter for target {i} ({os.path.basename(targets[i])})"
+                    f"For target {i} ({os.path.basename(targets[i])}), no valid features found after RANSAC filtering.\n"
                 )
+                continue
+
+            if phase_corr_filter:
+                print(f"Applying phase correlation filter...")
                 ref_good_temp, tgt_good_temp = find_corrs_shifts(
                     ref_img,
                     tgt_img,
@@ -1676,7 +1709,7 @@ def co_register(
             )
 
             print(
-                f"For target {i} ({os.path.basename(targets[i])}), shifts => x: {shift_x / scale_factors[i][1]}, y: {shift_y / scale_factors[i][0]} pixels."
+                f"For target {i} ({os.path.basename(targets[i])}), shifts => x: {shift_x / scale_factors[i][1]}, y: {shift_y / scale_factors[i][0]} pixels.\n"
             )
             shifts.append(
                 (shift_x / scale_factors[i][1], shift_y / scale_factors[i][0])
@@ -1685,7 +1718,7 @@ def co_register(
             to_warp = tgt_img if laplacian_kernel_size is None else grey_tgts[i]
             if shift_x == np.inf:
                 print(
-                    f"No valid shifts found for target {i} ({os.path.basename(targets[i])})"
+                    f"No valid shifts found for target {i} ({os.path.basename(targets[i])})\n"
                 )
                 continue
 
@@ -1727,7 +1760,7 @@ def co_register(
                 )
         except Exception as e:
             print(
-                f"Algorithm did not converge for target {i} ({os.path.basename(targets[i])}) {'for the reason below:' if rethrow_error else ''}"
+                f"Algorithm did not converge for target {i} ({os.path.basename(targets[i])}) {'for the reason below:' if rethrow_error else ''}\n"
             )
             if rethrow_error:
                 raise
@@ -1742,11 +1775,13 @@ def co_register(
                 ref_imgs = grey_refs
             else:
                 ref_img = grey_ref
+            grey_tgts = [grey_tgts[id] for id in process_ids]
             tgt_imgs = grey_tgts
+        else:
+            tgt_imgs = [tgt_imgs[id] for id in process_ids]
 
         if use_overlap:
             ref_imgs = [ref_imgs[id] for id in process_ids]
-            tgt_imgs = [tgt_imgs[id] for id in process_ids]
 
         out_gif = os.path.join(
             output_path,
