@@ -501,7 +501,7 @@ def plot_matching(
     plt.subplots_adjust(top=0.9)
 
 
-def reproject_tif(src_path, dst_path, dst_crs):
+def reproject_tif(src_path, dst_path, dst_crs, resampling=Resampling.bilinear):
 
     with rasterio.open(src_path) as src:
         print(f"reprojecting from {src.crs} to {dst_crs}")
@@ -523,7 +523,7 @@ def reproject_tif(src_path, dst_path, dst_crs):
                     src_crs=src.crs,
                     dst_transform=transform,
                     dst_crs=dst_crs,
-                    resampling=Resampling.nearest,
+                    resampling=resampling,
                 )
 
 
@@ -1997,7 +1997,8 @@ def find_scenes_dict(
                 scene_dict[id][s] = url
                 scene_dict[id][f"{s}_alternate"] = url_alternate
 
-    if "landsat:scene_id" in features[0].to_dict()["properties"]:
+    f0 = features[0].to_dict() if type(features[0]) != dict else features[0]
+    if "landsat:scene_id" in f0["properties"]:
         path_rows = [k.split("_")[2] for k in scene_dict]
         time_ind = 3
     else:
