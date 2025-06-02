@@ -2543,6 +2543,7 @@ def combine_scene_dicts(scene_dicts=list[dict]) -> dict:
 def generate_results_from_raw_inputs(
     ref_image: str,
     processed_output_images: list[str],
+    tgt_images: list[str],
     output_dir: str,
     method: str = "output",
 ) -> None:
@@ -2551,6 +2552,7 @@ def generate_results_from_raw_inputs(
     Args:
         ref_image (str): Path to the reference image.
         processed_output_images (list[str]): List of paths to the processed images.
+        tgt_images (list[str]): List of paths to the target images.
         output_dir (str): Directory to save the outputs.
         method (str): Method name to be used in the output names, optional, by default output.
     """
@@ -2594,18 +2596,14 @@ def generate_results_from_raw_inputs(
     if os.path.isfile(output_path):
         os.remove(output_path)
 
-    tgt_images_copy = [
-        os.path.join(os.path.dirname(ref_image), os.path.basename(img))
-        for img in processed_output_images
-    ]
     tgt_raw_list = []
     ref_imgs = []
-    for tgt in tgt_images_copy:
+    for tgt in tgt_images:
         _, (_, _, ref_overlap, tgt_overlap), _ = find_overlap(ref_image, tgt, True)
         ref_imgs.append(ref_overlap)
         tgt_raw_list.append(tgt_overlap)
 
-    datasets_paths = [ref_image] + tgt_images_copy
+    datasets_paths = [ref_image] + tgt_images
     ssims_aligned_raw = [
         np.round(ssim(ref_imgs[id], tgt_raw_list[id], win_size=3), 3)
         for id in range(len(tgt_raw_list))
@@ -2777,6 +2775,7 @@ def karios(
 
     os.makedirs(f"{output_dir}/Aligned", exist_ok=True)
     processed_output_images = []
+    processed_tgt_images = []
     for key in list(shifts_dict.keys()):
         output_path = os.path.join(f"{output_dir}/Aligned", os.path.basename(key))
         shift_x, shift_y = shifts_dict[key]
@@ -2784,11 +2783,13 @@ def karios(
             key, output_path, translation_x=shift_x, translation_y=shift_y
         )
         processed_output_images.append(output_path)
+        processed_tgt_images.append(key)
 
     run_time = time.time() - run_start
     generate_results_from_raw_inputs(
         ref_image,
         processed_output_images,
+        processed_tgt_images,
         output_dir=output_dir,
     )
     full_time = time.time() - full_start
@@ -2823,6 +2824,7 @@ def arosics(
     os.makedirs(f"{output_dir}/Aligned", exist_ok=True)
 
     processed_output_images = []
+    processed_tgt_images = []
     print(f"Reference image: {ref_image}")
     for i, tgt_image in enumerate(tgt_images_copy):
         print(f"Coregistering {tgt_image}")
@@ -2851,11 +2853,13 @@ def arosics(
                 os.remove(local_outputs[i])
         else:
             processed_output_images.append(local_outputs[i])
+            processed_tgt_images.append(tgt_image)
 
     run_time = time.time() - run_start
     generate_results_from_raw_inputs(
         ref_image,
         processed_output_images,
+        processed_tgt_images,
         output_dir=output_dir,
     )
     full_time = time.time() - full_start
