@@ -2844,16 +2844,23 @@ def arosics(
             ignore_errors=True,
             min_reliability=min_reliability,
         )
-        coreg_local.correct_shifts()
-        if not coreg_local.success:
-            print(
-                f"Coregistration not successfull for {tgt_image}. Removing the corresponding output: {local_outputs[i]}"
-            )
+        try:
+            coreg_local.correct_shifts()
+            if not coreg_local.success:
+                if os.path.isfile(local_outputs[i]):
+                    print(
+                        f"Coregistration was not successfull for {tgt_image}. Removing the corresponding output: {local_outputs[i]}"
+                    )
+                    os.remove(local_outputs[i])
+            else:
+                processed_output_images.append(local_outputs[i])
+                processed_tgt_images.append(tgt_image)
+        except:
             if os.path.isfile(local_outputs[i]):
+                print(
+                    f"Coregistration was not successfull for {tgt_image}. Removing the corresponding output: {local_outputs[i]}"
+                )
                 os.remove(local_outputs[i])
-        else:
-            processed_output_images.append(local_outputs[i])
-            processed_tgt_images.append(tgt_image)
 
     run_time = time.time() - run_start
     generate_results_from_raw_inputs(
