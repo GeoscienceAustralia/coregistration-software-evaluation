@@ -603,7 +603,7 @@ def find_overlap(
             raster_1_py_size != raster_2_py_size
         ):
             print(
-                f"WARNING: Ground resolutions are different for the provided images. Setting it to the {resampling_resolution} resolution."
+                f"WARNING: Ground resolutions are different for the provided images. Setting them to the {resampling_resolution} resolution.\n"
             )
 
             os.makedirs("temp", exist_ok=True)
@@ -666,7 +666,7 @@ def find_overlap(
         else (overlap_top - overlap_bottom) > 0
     )
 
-    assert x_condition and y_condition, "The provided scenes do not overlap"
+    assert x_condition and y_condition, "The provided scenes do not overlap."
 
     overlap_in_mosaic = rasterio.coords.BoundingBox(
         overlap_left, overlap_bottom, overlap_right, overlap_top
