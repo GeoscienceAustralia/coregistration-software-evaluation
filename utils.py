@@ -1887,7 +1887,7 @@ def co_register(
     print(f"Run time: {run_time} seconds")
     print(f"Total time: {full_time} seconds")
 
-    return tgt_aligned_list, shifts
+    return tgt_aligned_list, shifts, process_ids
 
 
 def apply_gamma(data, gamma=0.5, stretch_hist: bool = False, adjust_hist: bool = False):
@@ -2546,6 +2546,7 @@ def generate_results_from_raw_inputs(
     tgt_images: list[str],
     output_dir: str,
     method: str = "output",
+    target_ids: list | None = None,
 ) -> None:
     """
     Generates a gif from the processed images and the reference image.
@@ -2556,6 +2557,13 @@ def generate_results_from_raw_inputs(
         output_dir (str): Directory to save the outputs.
         method (str): Method name to be used in the output names, optional, by default output.
     """
+
+    if target_ids is not None:
+        assert len(target_ids) == len(
+            processed_output_images
+        ), "target_ids should be the same length as processed_output_images"
+    else:
+        target_ids = list(range(len(processed_output_images)))
 
     os.makedirs(output_dir, exist_ok=True)
     output_path = os.path.join(output_dir, f"{method}.gif")
@@ -2578,7 +2586,7 @@ def generate_results_from_raw_inputs(
         np.round(mse(ref_imgs[id], tgt_aligned_list[id]), 3)
         for id in range(len(tgt_aligned_list))
     ]
-    target_titles = [f"target_{str(i)}" for i in range(len(processed_output_images))]
+    target_titles = [f"target_{str(i)}" for i in target_ids]
     datasets_titles = ["Reference"] + [
         f"{target_title}, ssim:{ssim_score}, mse:{mse_score}"
         for target_title, ssim_score, mse_score in zip(
@@ -2750,23 +2758,23 @@ def karios(
 
     shutil.rmtree(temp_dir, ignore_errors=True)
     tgt_images_copy = tgt_images.copy()
-    process_ids = {}
-    for i, tgt in enumerate(tgt_images_copy):
-        process_ids[os.path.basename(tgt)] = i
 
     scene_names = []
     shifts = []
-    for tgt_image in tgt_images_copy:
+    target_ids = []
+    for i, tgt_image in enumerate(tgt_images_copy):
         line_found = False
         with open(log_file, "r") as f:
             for line in f:
                 if (os.path.basename(tgt_image) in line) and ("Process" in line):
-                    scene_names.append(tgt_image)
                     line_found = True
                 if line_found:
                     if "DX/DY(KLT) MEAN" in line:
                         splits = line.strip().split(" ")
-                        shifts.append([float(splits[-3]), float(splits[-1])])
+                        if splits[-3] != "nan" or splits[-1] != "nan":
+                            scene_names.append(tgt_image)
+                            shifts.append([float(splits[-3]), float(splits[-1])])
+                            target_ids.append(i)
                         break
 
     shifts_dict = {}
@@ -2791,12 +2799,13 @@ def karios(
         processed_output_images,
         processed_tgt_images,
         output_dir=output_dir,
+        target_ids=target_ids,
     )
     full_time = time.time() - full_start
     print(f"Run time: {run_time} seconds")
     print(f"Total time: {full_time} seconds")
 
-    return shifts_dict
+    return shifts_dict, target_ids
 
 
 def arosics(
@@ -2810,7 +2819,7 @@ def arosics(
     max_shift: int = 5,
     grid_res: int = 250,
     min_reliability: int = 30,
-):
+) -> list:
     os.makedirs(output_dir, exist_ok=True)
     run_start = full_start = time.time()
     tgt_images_copy = tgt_images.copy()
@@ -2825,6 +2834,8 @@ def arosics(
 
     processed_output_images = []
     processed_tgt_images = []
+    target_ids = []
+    shifts = []
     print(f"Reference image: {ref_image}")
     for i, tgt_image in enumerate(tgt_images_copy):
         print(f"Coregistering {tgt_image}")
@@ -2854,6 +2865,13 @@ def arosics(
             else:
                 processed_output_images.append(local_outputs[i])
                 processed_tgt_images.append(tgt_image)
+                target_ids.append(i)
+                shifts.append(
+                    (
+                        coreg_local.coreg_info["mean_shifts_px"]["x"],
+                        coreg_local.coreg_info["mean_shifts_px"]["y"],
+                    )
+                )
         except:
             print(f"Coregistration was not successfull for {tgt_image}.")
             if os.path.isfile(local_outputs[i]):
@@ -2866,10 +2884,13 @@ def arosics(
         processed_output_images,
         processed_tgt_images,
         output_dir=output_dir,
+        target_ids=target_ids,
     )
     full_time = time.time() - full_start
     print(f"Run time: {run_time} seconds")
     print(f"Total time: {full_time} seconds")
+
+    return shifts, target_ids
 
 
 def edge_detector(
