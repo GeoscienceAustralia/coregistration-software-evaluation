@@ -2957,6 +2957,8 @@ def process_existing_outputs(
     for i, file in enumerate(existing_files):
         tc_file = os.path.join(true_color_dir, os.path.basename(file))
         tc_file_ds = os.path.join(true_color_ds_dir, os.path.basename(file))
+        tc_files.append(tc_file)
+        tc_files_ds.append(tc_file_ds)
         if os.path.isfile(tc_file):
             print(f"True color scene {tc_file} already exists, skipping.")
             continue
@@ -2973,8 +2975,6 @@ def process_existing_outputs(
             True,
         )
         downsample_dataset(tc_file, 0.2, tc_file_ds)
-        tc_files.append(tc_file)
-        tc_files_ds.append(tc_file_ds)
 
     cols = ["Reference", "Closest_target", "Farthest_target"]
     df = pd.DataFrame(
