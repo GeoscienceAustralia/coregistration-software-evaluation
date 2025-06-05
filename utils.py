@@ -2956,7 +2956,7 @@ def process_existing_outputs(
             edge_detection_mode,
             True,
         )
-        downsample_dataset(file, 0.2, tc_file_ds)
+        downsample_dataset(tc_file, 0.2, tc_file_ds)
         tc_files.append(tc_file)
         tc_files_ds.append(tc_file_ds)
 
