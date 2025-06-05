@@ -2176,7 +2176,7 @@ def make_true_color_scene(
 
     img = apply_gamma(img, gamma, stretch_contrast, equalise_histogram)
     if edge_detection:
-        img = edge_detector(img, edge_detection_mode)
+        img = edge_detector(img, edge_detection_mode, morphology_kernels=None)
 
     if output_path is not None:
         with rasterio.open(output_path, "w", **profile) as ds:
@@ -2819,6 +2819,8 @@ def arosics(
     max_shift: int = 5,
     grid_res: int = 250,
     min_reliability: int = 30,
+    existing_ref_image: str | None = None,
+    existing_tgt_images: list[str] | None = None,
 ) -> list:
     os.makedirs(output_dir, exist_ok=True)
     run_start = full_start = time.time()
@@ -2863,6 +2865,15 @@ def arosics(
                     print(f"Removing the corresponding output: {local_outputs[i]}")
                     os.remove(local_outputs[i])
             else:
+                if existing_tgt_images is not None:
+                    tgt_image = existing_tgt_images[i]
+                    warp_affine_dataset(
+                        tgt_image,
+                        local_outputs[i],
+                        translation_x=coreg_local.coreg_info["mean_shifts_px"]["x"],
+                        translation_y=coreg_local.coreg_info["mean_shifts_px"]["y"],
+                    )
+
                 processed_output_images.append(local_outputs[i])
                 processed_tgt_images.append(tgt_image)
                 target_ids.append(i)
@@ -2878,6 +2889,8 @@ def arosics(
                 print(f"Removing the corresponding output: {local_outputs[i]}")
                 os.remove(local_outputs[i])
 
+    if existing_ref_image is not None:
+        ref_image = existing_ref_image
     run_time = time.time() - run_start
     generate_results_from_raw_inputs(
         ref_image,
@@ -2942,8 +2955,11 @@ def process_existing_outputs(
     tc_files = []
     tc_files_ds = []
     for i, file in enumerate(existing_files):
-        tc_file = f"{os.path.join(true_color_dir, os.path.basename(file))}"
+        tc_file = os.path.join(true_color_dir, os.path.basename(file))
         tc_file_ds = os.path.join(true_color_ds_dir, os.path.basename(file))
+        if os.path.isfile(tc_file):
+            print(f"True color scene {tc_file} already exists, skipping.")
+            continue
         make_true_color_scene(
             file,
             tc_file,
