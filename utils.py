@@ -2125,7 +2125,7 @@ def get_search_query(
 
 
 def make_true_color_scene(
-    dataset_paths: list[str],
+    dataset_paths: list[str] | str,
     output_path: str | None = None,
     gamma: float = 1.0,
     equalise_histogram: bool = False,
@@ -2141,12 +2141,10 @@ def make_true_color_scene(
     If `post_process_only` is True, it will only apply post-processing without reading the bands.
     """
     if post_process_only:
-        if output_path is None:
-            raise ValueError("Output path must be provided for post-processing only.")
-        if not os.path.isfile(output_path):
-            raise FileNotFoundError(f"Output file {output_path} does not exist.")
-        profile = rasterio.open(output_path).profile
-        img = flip_img(rasterio.open(output_path).read())
+        if not os.path.isfile(dataset_paths):
+            raise FileNotFoundError(f"Output file {dataset_paths} does not exist.")
+        profile = rasterio.open(dataset_paths).profile
+        img = flip_img(rasterio.open(dataset_paths).read())
     else:
         red = dataset_paths[0]
         green = dataset_paths[1]
@@ -2182,8 +2180,10 @@ def make_true_color_scene(
 
     if output_path is not None:
         with rasterio.open(output_path, "w", **profile) as ds:
-            if gray_scale:
+            if gray_scale or img.ndim == 2:
                 ds.write(img, 1)
+            elif img.ndim == 3 and img.shape[2] == 1:
+                ds.write(img[:, :, 0], 1)
             else:
                 ds.write(img[:, :, 0], 1)
                 ds.write(img[:, :, 1], 2)
@@ -2920,6 +2920,61 @@ def edge_detector(
     else:
         raise ValueError("Edge detection mode must be 'sobel', 'laplacian' or 'canny'.")
     return edges
+
+
+def process_existing_outputs(
+    existing_files: list[str],
+    output_dir: str,
+    edge_detection: bool = False,
+    edge_detection_mode: Literal["sobel", "laplacian"] = "sobel",
+    gamma: float = 1.0,
+    equalise_histogram: bool = False,
+    stretch_contrast: bool = False,
+    gray_scale: bool = False,
+    averaging: bool = False,
+):
+    true_color_dir = f"{output_dir}/true_color"
+    os.makedirs(true_color_dir, exist_ok=True)
+
+    true_color_ds_dir = f"{output_dir}/true_color_ds"
+    os.makedirs(true_color_ds_dir, exist_ok=True)
+
+    tc_files = []
+    tc_files_ds = []
+    for i, file in enumerate(existing_files):
+        tc_file = f"{os.path.join(true_color_dir, os.path.basename(file))}"
+        tc_file_ds = os.path.join(true_color_ds_dir, os.path.basename(file))
+        make_true_color_scene(
+            file,
+            tc_file,
+            gamma,
+            equalise_histogram,
+            stretch_contrast,
+            gray_scale,
+            averaging,
+            edge_detection,
+            edge_detection_mode,
+            True,
+        )
+        downsample_dataset(file, 0.2, tc_file_ds)
+        tc_files.append(tc_file)
+        tc_files_ds.append(tc_file_ds)
+
+    cols = ["Reference", "Closest_target", "Farthest_target"]
+    df = pd.DataFrame(
+        {
+            cols[i]: [
+                file,
+                tc_files_ds[i],
+            ]
+            for i, file in enumerate(tc_files)
+        },
+        columns=cols,
+    )
+    df.to_csv(
+        f"{output_dir}/pairs.csv",
+        index=False,
+    )
 
 
 def download_and_process_pairs(
