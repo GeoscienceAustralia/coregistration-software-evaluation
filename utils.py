@@ -31,7 +31,7 @@ import boto3
 from pystac_client import Client
 from osgeo import ogr
 from shapely import ops, from_wkt
-from shapely import Polygon
+from shapely import Polygon, box
 from pathlib import Path
 from typing import Literal
 from datetime import datetime
@@ -2089,6 +2089,7 @@ def get_search_query(
     end_date: str = "2015-01-23T23:59:59",
     cloud_cover: int | None = 80,
     is_landsat: bool = True,
+    extra_query: dict | None = None,
 ) -> dict:
     if type(bbox) != list:
         bbox = [bbox.left, bbox.bottom, bbox.right, bbox.top]
@@ -2120,6 +2121,9 @@ def get_search_query(
 
     if len(query["query"]) == 0:
         del query["query"]
+
+    if extra_query is not None:
+        query = query | extra_query
 
     return query
 
@@ -2856,6 +2860,16 @@ def arosics(
             max_shift=max_shift,
             ignore_errors=True,
             min_reliability=min_reliability,
+            footprint_poly_ref=(
+                None
+                if existing_ref_image is None
+                else box(*rasterio.open(existing_ref_image).bounds).wkt
+            ),
+            footprint_poly_tgt=(
+                None
+                if existing_tgt_images is None
+                else box(*rasterio.open(existing_tgt_images[i]).bounds).wkt
+            ),
         )
         try:
             coreg_local.correct_shifts()
@@ -2945,11 +2959,12 @@ def process_existing_outputs(
     stretch_contrast: bool = False,
     gray_scale: bool = False,
     averaging: bool = False,
+    subdir: str = "true_color",
 ):
-    true_color_dir = f"{output_dir}/true_color"
+    true_color_dir = f"{output_dir}/{subdir}"
     os.makedirs(true_color_dir, exist_ok=True)
 
-    true_color_ds_dir = f"{output_dir}/true_color_ds"
+    true_color_ds_dir = f"{output_dir}/{subdir}_ds"
     os.makedirs(true_color_ds_dir, exist_ok=True)
 
     tc_files = []
@@ -3007,6 +3022,7 @@ def download_and_process_pairs(
     stretch_contrast: bool = False,
     gray_scale: bool = False,
     averaging: bool = False,
+    subdir: str = "true_color",
 ):
     os.makedirs(output_dir, exist_ok=True)
 
@@ -3024,10 +3040,10 @@ def download_and_process_pairs(
 
     ext = os.path.splitext(os.path.basename(r_url))[1]
 
-    true_color_dir = f"{output_dir}/true_color"
+    true_color_dir = f"{output_dir}/{subdir}"
     os.makedirs(true_color_dir, exist_ok=True)
 
-    true_color_ds_dir = f"{output_dir}/true_color_ds"
+    true_color_ds_dir = f"{output_dir}/{subdir}_ds"
     os.makedirs(true_color_ds_dir, exist_ok=True)
 
     if type(data) == list and type(reference_month) == str:
