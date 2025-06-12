@@ -1711,16 +1711,18 @@ def co_register(
             print(
                 f"For target {i} ({os.path.basename(targets[i])}), shifts => x: {shift_x / scale_factors[i][1]}, y: {shift_y / scale_factors[i][0]} pixels.\n"
             )
-            shifts.append(
-                (shift_x / scale_factors[i][1], shift_y / scale_factors[i][0])
-            )
 
-            to_warp = tgt_img if laplacian_kernel_size is None else grey_tgts[i]
             if shift_x == np.inf:
                 print(
                     f"No valid shifts found for target {i} ({os.path.basename(targets[i])})\n"
                 )
                 continue
+
+            shifts.append(
+                (shift_x / scale_factors[i][1], shift_y / scale_factors[i][0])
+            )
+
+            to_warp = tgt_img if laplacian_kernel_size is None else grey_tgts[i]
 
             tgt_aligned = warp_affine_dataset(
                 to_warp,
@@ -1875,8 +1877,27 @@ def co_register(
                 f"output.csv",
             )
             out_ssim_df = pd.DataFrame(
-                zip(target_titles, ssims_raw, ssims_aligned, mse_raw, mse_aligned),
-                columns=["Title", "SSIM Raw", "SSIM Aligned", "MSE Raw", "MSE Aligned"],
+                zip(
+                    target_titles,
+                    ssims_raw,
+                    mse_raw,
+                    ssims_aligned,
+                    mse_aligned,
+                    [np.round(run_time, 2).tolist()] * len(target_titles),
+                    [
+                        tuple([np.round(el.tolist(), 3).tolist() for el in shift])
+                        for shift in shifts
+                    ],
+                ),
+                columns=[
+                    "Title",
+                    "SSIM Raw",
+                    "MSE Raw",
+                    "SSIM Aligned",
+                    "MSE Aligned",
+                    "Run Time",
+                    "Shifts",
+                ],
                 index=None,
             )
             out_ssim_df.to_csv(out_ssim, encoding="utf-8")
@@ -2549,6 +2570,8 @@ def generate_results_from_raw_inputs(
     processed_output_images: list[str],
     tgt_images: list[str],
     output_dir: str,
+    shifts: list[tuple],
+    run_time: float,
     method: str = "output",
     target_ids: list | None = None,
 ) -> None:
@@ -2644,11 +2667,24 @@ def generate_results_from_raw_inputs(
         zip(
             target_titles,
             ssims_aligned_raw,
-            ssims_aligned,
             mse_aligned_raw,
+            ssims_aligned,
             mse_aligned,
+            [np.round(run_time, 2).tolist()] * len(target_titles),
+            [
+                tuple([np.round(el.tolist(), 3).tolist() for el in shift])
+                for shift in shifts
+            ],
         ),
-        columns=["Title", "SSIM Raw", "SSIM Aligned", "MSE Raw", "MSE Aligned"],
+        columns=[
+            "Title",
+            "SSIM Raw",
+            "MSE Raw",
+            "SSIM Aligned",
+            "MSE Aligned",
+            "Run Time",
+            "Shifts",
+        ],
         index=None,
     )
     out_ssim_df.to_csv(output_path, encoding="utf-8")
@@ -2788,6 +2824,7 @@ def karios(
     os.makedirs(f"{output_dir}/Aligned", exist_ok=True)
     processed_output_images = []
     processed_tgt_images = []
+    final_shifts = []
     for key in list(shifts_dict.keys()):
         output_path = os.path.join(f"{output_dir}/Aligned", os.path.basename(key))
         shift_x, shift_y = shifts_dict[key]
@@ -2796,6 +2833,7 @@ def karios(
         )
         processed_output_images.append(output_path)
         processed_tgt_images.append(key)
+        final_shifts.append((np.float64(shift_x), np.float64(shift_y)))
 
     run_time = time.time() - run_start
     generate_results_from_raw_inputs(
@@ -2803,6 +2841,8 @@ def karios(
         processed_output_images,
         processed_tgt_images,
         output_dir=output_dir,
+        shifts=final_shifts,
+        run_time=run_time,
         target_ids=target_ids,
     )
     full_time = time.time() - full_start
@@ -2911,6 +2951,8 @@ def arosics(
         processed_output_images,
         processed_tgt_images,
         output_dir=output_dir,
+        shifts=shifts,
+        run_time=run_time,
         target_ids=target_ids,
     )
     full_time = time.time() - full_start
