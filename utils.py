@@ -3214,3 +3214,100 @@ def download_and_process_pairs(
         f"{output_dir}/pairs.csv",
         index=False,
     )
+
+
+def combine_comparison_results(
+    root_output: str, coreg_default_params: list[bool] | None
+) -> pd.DataFrame:
+
+    methods = ["Co-Register", "Karios", "AROSICS", "AROSICS Edge"]
+
+    try:
+        coreg_df = pd.read_csv(f"{root_output}/Co_Register/output.csv")
+    except:
+        coreg_df = pd.read_csv(f"{root_output}/Co_Register_lpc/output.csv")
+    coreg_df["Method"] = ["Co-Register"] * len(coreg_df)
+
+    if coreg_default_params is None:
+        coreg_default_params = [True] * len(coreg_df)
+
+    karios_df = pd.read_csv(f"{root_output}/Karios/output.csv")
+    karios_df["Method"] = ["Karios"] * len(karios_df)
+
+    arosics_df = pd.read_csv(f"{root_output}/AROSICS/output.csv")
+    arosics_df["Method"] = ["AROSICS"] * len(arosics_df)
+
+    arosics_edge_df = pd.read_csv(f"{root_output}/AROSICS_edge/output.csv")
+    arosics_edge_df["Method"] = ["AROSICS Edge"] * len(arosics_edge_df)
+
+    # Combine all dataframes
+    df_list = [coreg_df, karios_df, arosics_df, arosics_edge_df]
+    output_dfs = (
+        pd.concat(
+            df_list,
+        )
+        .reset_index(drop=True)
+        .drop("Unnamed: 0", axis=1)
+    )
+    output_dfs
+
+    target_0 = []
+    target_1 = []
+
+    for df in df_list:
+        try:
+            target_0.extend(
+                df[df["Title"] == "target_0"][["SSIM Raw", "MSE Raw"]]
+                .values[0]
+                .tolist()
+            )
+            break
+        except:
+            continue
+
+    for df in df_list:
+        try:
+            target_1.extend(
+                df[df["Title"] == "target_1"][["SSIM Raw", "MSE Raw"]]
+                .values[0]
+                .tolist()
+            )
+            break
+        except:
+            continue
+
+    for i, method in enumerate(methods):
+        method_slice = output_dfs[output_dfs["Method"] == method].drop("Method", axis=1)
+
+        target_0_vals = method_slice[method_slice["Title"] == "target_0"]
+        if target_0_vals.empty:
+            target_0.extend(["Failed"] * 4)
+        else:
+            target_0.extend(target_0_vals.values[0][3:].tolist())
+
+        if i == 0:
+            target_0.extend([coreg_default_params[0]])
+        elif i == 1 or i == 2:
+            target_0.extend([True])
+        else:
+            target_0.extend([False])
+
+        target_1_vals = method_slice[method_slice["Title"] == "target_1"]
+        if target_1_vals.empty:
+            target_1.extend(["Failed"] * 4)
+        else:
+            target_1.extend(target_1_vals.values[0][3:].tolist())
+
+        if i == 0:
+            target_1.extend([coreg_default_params[1]])
+        elif i == 1 or i == 2:
+            target_1.extend([True])
+        else:
+            target_1.extend([False])
+
+    out_df = pd.DataFrame([target_0, target_1])
+    out_df.to_csv(
+        f"{root_output}/co_registration_results.csv",
+        index=False,
+    )
+    return out_df
