@@ -3217,27 +3217,31 @@ def download_and_process_pairs(
 
 
 def combine_comparison_results(
-    root_output: str, coreg_default_params: list[bool] | None
+    root_output: str,
+    coreg_default_params: list[bool] | None,
+    dir_suffix: str | None = None,
 ) -> pd.DataFrame:
+
+    dir_suffix = f"_{dir_suffix}" if dir_suffix else ""
 
     methods = ["Co-Register", "Karios", "AROSICS", "AROSICS Edge"]
 
     try:
-        coreg_df = pd.read_csv(f"{root_output}/Co_Register/output.csv")
+        coreg_df = pd.read_csv(f"{root_output}/Co_Register{dir_suffix}/output.csv")
     except:
-        coreg_df = pd.read_csv(f"{root_output}/Co_Register_lpc/output.csv")
+        coreg_df = pd.read_csv(f"{root_output}/Co_Register{dir_suffix}_lpc/output.csv")
     coreg_df["Method"] = ["Co-Register"] * len(coreg_df)
 
     if coreg_default_params is None:
         coreg_default_params = [True] * len(coreg_df)
 
-    karios_df = pd.read_csv(f"{root_output}/Karios/output.csv")
+    karios_df = pd.read_csv(f"{root_output}/Karios{dir_suffix}/output.csv")
     karios_df["Method"] = ["Karios"] * len(karios_df)
 
-    arosics_df = pd.read_csv(f"{root_output}/AROSICS/output.csv")
+    arosics_df = pd.read_csv(f"{root_output}/AROSICS{dir_suffix}/output.csv")
     arosics_df["Method"] = ["AROSICS"] * len(arosics_df)
 
-    arosics_edge_df = pd.read_csv(f"{root_output}/AROSICS_edge/output.csv")
+    arosics_edge_df = pd.read_csv(f"{root_output}/AROSICS{dir_suffix}_edge/output.csv")
     arosics_edge_df["Method"] = ["AROSICS Edge"] * len(arosics_edge_df)
 
     # Combine all dataframes
