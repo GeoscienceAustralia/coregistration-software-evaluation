@@ -2149,7 +2149,7 @@ def get_search_query(
     return query
 
 
-def make_true_color_scene(
+def make_composite_scene(
     dataset_paths: list[str] | str,
     output_path: str | None = None,
     gamma: float = 1.0,
@@ -2160,10 +2160,12 @@ def make_true_color_scene(
     edge_detection: bool = False,
     edge_detection_mode: Literal["sobel", "laplacian"] = "sobel",
     post_process_only: bool = False,
+    reference_band_number: Literal[1, 2, 3] | None = None,
 ) -> np.ndarray:
     """
-    Creates a true color scene from three bands (red, green, blue) of a dataset.
+    Creates a composite scene from three individual band datasets.
     If `post_process_only` is True, it will only apply post-processing without reading the bands.
+    `reference_band_number` is used to select a specific band for adjusting the size and resolution of the scenes according to.
     """
     if post_process_only:
         if not os.path.isfile(dataset_paths):
@@ -2171,27 +2173,38 @@ def make_true_color_scene(
         profile = rasterio.open(dataset_paths).profile
         img = flip_img(rasterio.open(dataset_paths).read())
     else:
-        red = dataset_paths[0]
-        green = dataset_paths[1]
-        blue = dataset_paths[2]
-        profile = rasterio.open(red).profile
+        all_bands = [dataset_paths[0], dataset_paths[1], dataset_paths[2]]
+
+        if reference_band_number is not None:
+            profile = rasterio.open(all_bands[reference_band_number - 1]).profile
+        else:
+            profile = rasterio.open(all_bands[0]).profile
+
         if not gray_scale:
             profile["count"] = 3
         profile["dtype"] = "uint8"
 
-        reds = rasterio.open(red).read(1)
-        if reds.dtype == "uint16":
-            reds = np.clip(reds / 256, 0, 255).astype("uint8")
+        band_imgs = []
+        for b in all_bands:
+            bp = rasterio.open(b).profile
+            if bp["width"] != profile["width"] or bp["height"] != profile["height"]:
+                print(
+                    f"Band {b} has different dimensions than the reference profile. Downsampling to match the reference profile."
+                )
+                bs, _ = downsample_dataset(
+                    b,
+                    force_shape=(profile["height"], profile["width"]),
+                )
+                bs = bs[0, :, :]
+            else:
+                bs = rasterio.open(b).read(1)
 
-        greens = rasterio.open(green).read(1)
-        if greens.dtype == "uint16":
-            greens = np.clip(greens / 256, 0, 255).astype("uint8")
+            if bs.dtype == "uint16":
+                bs = np.clip(bs / 256, 0, 255).astype("uint8")
 
-        blues = rasterio.open(blue).read(1)
-        if blues.dtype == "uint16":
-            blues = np.clip(blues / 256, 0, 255).astype("uint8")
+            band_imgs.append(bs)
 
-        img = cv.merge([reds, greens, blues])
+        img = cv.merge(band_imgs)
 
     if gray_scale:
         if averaging:
@@ -3002,26 +3015,34 @@ def process_existing_outputs(
     gray_scale: bool = False,
     averaging: bool = False,
     subdir: str = "true_color",
+    force_reprocess: bool = False,
 ):
-    true_color_dir = f"{output_dir}/{subdir}"
-    os.makedirs(true_color_dir, exist_ok=True)
+    os.makedirs(output_dir, exist_ok=True)
 
-    true_color_ds_dir = f"{output_dir}/{subdir}_ds"
-    os.makedirs(true_color_ds_dir, exist_ok=True)
+    process_dir = f"{output_dir}/{subdir}"
+    process_ds_dir = f"{output_dir}/{subdir}_ds"
 
-    tc_files = []
-    tc_files_ds = []
-    for i, file in enumerate(existing_files):
-        tc_file = os.path.join(true_color_dir, os.path.basename(file))
-        tc_file_ds = os.path.join(true_color_ds_dir, os.path.basename(file))
-        tc_files.append(tc_file)
-        tc_files_ds.append(tc_file_ds)
-        if os.path.isfile(tc_file):
-            print(f"True color scene {tc_file} already exists, skipping.")
+    if force_reprocess:
+        print("Force reprocessing is enabled, all existing files will be reprocessed.")
+        shutil.rmtree(process_dir, ignore_errors=True)
+        shutil.rmtree(process_ds_dir, ignore_errors=True)
+
+    os.makedirs(process_dir, exist_ok=True)
+    os.makedirs(process_ds_dir, exist_ok=True)
+
+    proc_files = []
+    proc_files_ds = []
+    for file in existing_files:
+        proc_file = os.path.join(process_dir, os.path.basename(file))
+        proc_file_ds = os.path.join(process_ds_dir, os.path.basename(file))
+        proc_files.append(proc_file)
+        proc_files_ds.append(proc_file_ds)
+        if os.path.isfile(proc_file):
+            print(f"Scene {proc_file} already exists, skipping.")
             continue
-        make_true_color_scene(
+        make_composite_scene(
             file,
-            tc_file,
+            proc_file,
             gamma,
             equalise_histogram,
             stretch_contrast,
@@ -3031,16 +3052,16 @@ def process_existing_outputs(
             edge_detection_mode,
             True,
         )
-        downsample_dataset(tc_file, 0.2, tc_file_ds)
+        downsample_dataset(proc_file, 0.2, proc_file_ds)
 
     cols = ["Reference", "Closest_target", "Farthest_target"]
     df = pd.DataFrame(
         {
             cols[i]: [
                 file,
-                tc_files_ds[i],
+                proc_files_ds[i],
             ]
-            for i, file in enumerate(tc_files)
+            for i, file in enumerate(proc_files)
         },
         columns=cols,
     )
@@ -3052,7 +3073,7 @@ def process_existing_outputs(
 
 def download_and_process_pairs(
     data: dict | list,
-    rgb_channels: list[str],
+    bands: list[str],
     output_dir: str,
     aws_session: rasterio.session.AWSSession | None = None,
     keep_original_band_scenes: bool = False,
@@ -3065,28 +3086,35 @@ def download_and_process_pairs(
     gray_scale: bool = False,
     averaging: bool = False,
     subdir: str = "true_color",
+    force_reprocess: bool = False,
+    reference_band_number: int | None = None,
 ):
     os.makedirs(output_dir, exist_ok=True)
+
+    process_dir = f"{output_dir}/{subdir}"
+    process_ds_dir = f"{output_dir}/{subdir}_ds"
+
+    if force_reprocess:
+        print("Force reprocessing is enabled, all existing files will be reprocessed.")
+        shutil.rmtree(process_dir, ignore_errors=True)
+        shutil.rmtree(process_ds_dir, ignore_errors=True)
+
+    os.makedirs(process_dir, exist_ok=True)
+    os.makedirs(process_ds_dir, exist_ok=True)
 
     date_dict = data[0] if type(data) == list else data
 
     date = list(date_dict.keys())[0]
 
-    r_url = date_dict[date][0][rgb_channels[0]]
-    g_url = date_dict[date][0][rgb_channels[1]]
-    b_url = date_dict[date][0][rgb_channels[2]]
+    b0_url = date_dict[date][0][bands[0]]
+    b1_url = date_dict[date][0][bands[1]]
+    b2_url = date_dict[date][0][bands[2]]
 
-    r_band_suffix = os.path.splitext(os.path.basename(r_url))[0].split("_")[-1]
-    g_band_suffix = os.path.splitext(os.path.basename(g_url))[0].split("_")[-1]
-    b_band_suffix = os.path.splitext(os.path.basename(b_url))[0].split("_")[-1]
+    b0_band_suffix = os.path.splitext(os.path.basename(b0_url))[0].split("_")[-1]
+    b1_band_suffix = os.path.splitext(os.path.basename(b1_url))[0].split("_")[-1]
+    b2_band_suffix = os.path.splitext(os.path.basename(b2_url))[0].split("_")[-1]
 
-    ext = os.path.splitext(os.path.basename(r_url))[1]
-
-    true_color_dir = f"{output_dir}/{subdir}"
-    os.makedirs(true_color_dir, exist_ok=True)
-
-    true_color_ds_dir = f"{output_dir}/{subdir}_ds"
-    os.makedirs(true_color_ds_dir, exist_ok=True)
+    ext = os.path.splitext(os.path.basename(b0_url))[1]
 
     if type(data) == list and type(reference_month) == str:
         reference_month = [reference_month] * len(data)
@@ -3120,22 +3148,21 @@ def download_and_process_pairs(
                 break
         path_row_str = f" and path_row: {path_row}" if path_row else ""
         print(
-            f"Now downloading and processing pairs for {el['scene_name']}{path_row_str}, scene {j + 1} of 3.",
-            end="\r",
+            f"Now downloading and processing scenes for {el['scene_name']}{path_row_str}, scene {j + 1} of 3.",
         )
-        r_url = el[rgb_channels[0] + "_alternate"]
-        g_url = el[rgb_channels[1] + "_alternate"]
-        b_url = el[rgb_channels[2] + "_alternate"]
+        b0_url = el[bands[0] + "_alternate"]
+        b1_url = el[bands[1] + "_alternate"]
+        b2_url = el[bands[2] + "_alternate"]
         originals_dir = f"{output_dir}/Originals/{el['scene_name']}"
 
-        tc_file = (
-            f"{os.path.join(true_color_dir, os.path.basename(originals_dir))}_TC{ext}"
+        proc_file = (
+            f"{os.path.join(process_dir, os.path.basename(originals_dir))}_PROC{ext}"
         )
         post_process_only = False
-        if os.path.isfile(tc_file):
-            print(f"True color scene {tc_file} already exists, skipping.")
-            el["local_path"] = tc_file
-            el["local_path_ds"] = tc_file
+        if os.path.isfile(proc_file):
+            print(f"Scene {proc_file} already exists, skipping.")
+            el["local_path"] = proc_file
+            el["local_path_ds"] = proc_file
             if (
                 (not edge_detection)
                 and (not equalise_histogram)
@@ -3146,39 +3173,37 @@ def download_and_process_pairs(
                 post_process_only = True
 
         os.makedirs(originals_dir, exist_ok=True)
-        r_output = os.path.join(originals_dir, os.path.basename(r_url))
-        g_output = os.path.join(originals_dir, os.path.basename(g_url))
-        b_output = os.path.join(originals_dir, os.path.basename(b_url))
+        b0_output = os.path.join(originals_dir, os.path.basename(b0_url))
+        b1_output = os.path.join(originals_dir, os.path.basename(b1_url))
+        b2_output = os.path.join(originals_dir, os.path.basename(b2_url))
 
         if (
-            os.path.isfile(r_output)
-            and os.path.isfile(g_output)
-            and os.path.isfile(b_output)
+            os.path.isfile(b0_output)
+            and os.path.isfile(b1_output)
+            and os.path.isfile(b2_output)
         ):
-            print(
-                f"Original bands {r_output}, {g_output}, {b_output} already exist, skipping."
-            )
+            print(f"Original band files already exist, skipping.")
         else:
-            r_img, r_meta = stream_scene_from_aws(r_url, aws_session)
-            g_img, g_meta = stream_scene_from_aws(g_url, aws_session)
-            b_img, b_meta = stream_scene_from_aws(b_url, aws_session)
+            b0_img, b0_meta = stream_scene_from_aws(b0_url, aws_session)
+            b1_img, b1_meta = stream_scene_from_aws(b1_url, aws_session)
+            b2_img, b2_meta = stream_scene_from_aws(b2_url, aws_session)
 
-        imgs = [r_img, g_img, b_img]
-        outputs = [r_output, g_output, b_output]
-        metas = [r_meta, g_meta, b_meta]
-        for i, img in enumerate(imgs):
-            with rasterio.open(outputs[i], "w", **metas[i]["profile"]) as ds:
-                ds.write(img[0, :, :], 1)
+            imgs = [b0_img, b1_img, b2_img]
+            outputs = [b0_output, b1_output, b2_output]
+            metas = [b0_meta, b1_meta, b2_meta]
+            for i, img in enumerate(imgs):
+                with rasterio.open(outputs[i], "w", **metas[i]["profile"]) as ds:
+                    ds.write(img[0, :, :], 1)
 
         files = glob.glob(f"{originals_dir}/**")
-        r_band = list(filter(lambda f: f.endswith(f"{r_band_suffix}{ext}"), files))[0]
-        g_band = list(filter(lambda f: f.endswith(f"{g_band_suffix}{ext}"), files))[0]
-        b_band = list(filter(lambda f: f.endswith(f"{b_band_suffix}{ext}"), files))[0]
-        true_bands = [r_band, g_band, b_band]
-        tc_file_ds = os.path.join(true_color_ds_dir, os.path.basename(tc_file))
-        make_true_color_scene(
-            true_bands,
-            tc_file,
+        b0_band = list(filter(lambda f: f.endswith(f"{b0_band_suffix}{ext}"), files))[0]
+        b1_band = list(filter(lambda f: f.endswith(f"{b1_band_suffix}{ext}"), files))[0]
+        b2_band = list(filter(lambda f: f.endswith(f"{b2_band_suffix}{ext}"), files))[0]
+        proc_bands = [b0_band, b1_band, b2_band]
+        proc_file_ds = os.path.join(process_ds_dir, os.path.basename(proc_file))
+        make_composite_scene(
+            proc_bands,
+            proc_file,
             gamma,
             equalise_histogram,
             stretch_contrast,
@@ -3187,17 +3212,20 @@ def download_and_process_pairs(
             edge_detection,
             edge_detection_mode,
             post_process_only,
+            reference_band_number,
         )
-        downsample_dataset(tc_file, 0.2, tc_file_ds)
+        downsample_dataset(proc_file, 0.2, proc_file_ds)
 
-        el["local_path"] = tc_file
-        el["local_path_ds"] = tc_file_ds
+        el["local_path"] = proc_file
+        el["local_path_ds"] = proc_file_ds
 
         if not keep_original_band_scenes:
             shutil.rmtree(
                 f"{output_dir}/Originals",
                 ignore_errors=True,
             )
+
+    print("Processing scenes done!")
 
     cols = ["Reference", "Closest_target", "Farthest_target"]
     df = pd.DataFrame(
