@@ -3088,6 +3088,7 @@ def download_and_process_pairs(
     subdir: str = "true_color",
     force_reprocess: bool = False,
     reference_band_number: int | None = None,
+    filename_suffix: str = "PROC",
 ):
     os.makedirs(output_dir, exist_ok=True)
 
@@ -3155,9 +3156,7 @@ def download_and_process_pairs(
         b2_url = el[bands[2] + "_alternate"]
         originals_dir = f"{output_dir}/Originals/{el['scene_name']}"
 
-        proc_file = (
-            f"{os.path.join(process_dir, os.path.basename(originals_dir))}_PROC{ext}"
-        )
+        proc_file = f"{os.path.join(process_dir, os.path.basename(originals_dir))}_{filename_suffix}{ext}"
         post_process_only = False
         if os.path.isfile(proc_file):
             print(f"Scene {proc_file} already exists, skipping.")
