@@ -347,6 +347,24 @@ def scale_transform(
     resolution_ratio_x: float,
     adjust_to_centre: bool = False,
 ) -> np.ndarray:
+    """Rescales the warp matrix according to the provided resolution ratios.
+
+    Parameters
+    ----------
+    warp_matrix : np.ndarray
+        Warp matrix to be rescaled.
+    resolution_ratio_y : float
+        Resolution ratio for the y dimension.
+    resolution_ratio_x : float
+        Resolution ratio for the x dimension.
+    adjust_to_centre : bool, optional
+        Adjusts the warp matrix to the centre of the new pixel size if True.
+
+    Returns
+    -------
+    np.ndarray
+        New warp matrix with adjusted resolutions.
+    """
     scaled_warp = warp_matrix.copy()
     scaled_warp[:, 0] /= resolution_ratio_x
     scaled_warp[:, 1] /= resolution_ratio_y
@@ -365,6 +383,23 @@ def readjust_origin_for_new_pixel_size(
 ) -> rasterio.Affine:
     """
     Readjusts the origin of a scene after resampling.
+
+    Parameters
+    ----------
+    transform : rasterio.Affine
+        The original affine transformation of the scene.
+    scale_factor_y : float
+        The scale factor for the y dimension.
+    scale_factor_x : float
+        The scale factor for the x dimension.
+    adjust_to_centre : bool, optional
+        If True, the origin will be adjusted to the centre of the new pixel size.
+        If False, the origin will remain at the top-left corner. Defaults to False.
+
+    Returns
+    -------
+    rasterio.Affine
+        The new affine transformation with the adjusted origin.
     """
     if not adjust_to_centre:
         return transform
@@ -383,10 +418,40 @@ def downsample_dataset(
     force_shape: tuple = (),  # (height, width)
     readjust_origin: bool = False,
     round_resolution: bool = False,
-):
+) -> tuple:
     """
     Downsamples the output data and returns the new downsampled data and its new affine transformation according to `scale_factor`
     The output shape could also be forced using `forced_shape` parameter.
+
+    Parameters
+    ----------
+    dataset_path : str
+        Path to the dataset to be downsampled.
+    scale_factor : float or list[float], optional
+        Scale factor for downsampling. If a single float is provided, it will be applied to both dimensions.
+        If a list of two floats is provided, they will be applied to the height and width respectively.
+        Defaults to 1.0 (no downsampling).
+    output_file : str, optional
+        Path to save the downsampled dataset. If not provided, the data will not be saved to a file.
+    enhance_function : callable, optional
+        A function to enhance the data after downsampling. It should accept a numpy array and return a modified numpy array.
+        Defaults to None (no enhancement).
+    force_shape : tuple, optional
+        A tuple specifying the desired output shape (height, width). If provided, the output data will be forced to this shape.
+        If empty, the output shape will be calculated based on the scale factor.
+    readjust_origin : bool, optional
+        If True, the origin of the affine transformation will be readjusted after downsampling.
+        Defaults to False.
+    round_resolution : bool, optional
+        If True, the pixel size in the affine transformation will be rounded to the nearest integer.
+        Defaults to False.
+
+    Returns
+    -------
+    tuple
+        A tuple containing:
+        - data: numpy array of the downsampled data.
+        - transform: rasterio.Affine object representing the new affine transformation.
     """
     with rasterio.open(dataset_path) as dataset:
         # resample data to target shape
@@ -501,7 +566,25 @@ def plot_matching(
     plt.subplots_adjust(top=0.9)
 
 
-def reproject_tif(src_path, dst_path, dst_crs, resampling=Resampling.bilinear):
+def reproject_tif(
+    src_path: Path | str,
+    dst_path: Path | str,
+    dst_crs: str,
+    resampling: Resampling = Resampling.bilinear,
+):
+    """Reprojects a raster file to a new coordinate reference system (CRS) and saves it to a new file.
+
+    Parameters
+    ----------
+    src_path : : Path | str
+        Path to the source raster file to be reprojected.
+    dst_path : : Path | str
+        Destination path where the reprojected raster file will be saved.
+    dst_crs : : str
+        Destination coordinate reference system in a format recognized by rasterio (e.g., "EPSG:4326").
+    resampling : Resampling, optional
+        Resampling method to use during reprojection. Defaults to Resampling.bilinear.
+    """
 
     with rasterio.open(src_path) as src:
         print(f"reprojecting from {src.crs} to {dst_crs}")
@@ -537,6 +620,16 @@ def adjust_resolutions(
 ) -> tuple:
     """
     Adjusts the resolutions for two or more datasets with different ones. Rounding errors might cause a slightly different output resolutions.
+
+    Parameters
+    ----------
+    dataset_paths : list[str]
+        List of paths to the datasets to be adjusted.
+    output_paths : list[str]
+        List of paths where the adjusted datasets will be saved.
+    resampling_resolution : str, optional
+        The resolution to which the datasets should be resampled if their resolutions are different.
+        Can be either "lower" or "higher", by default "lower".
     """
     ps_x = []
     ps_y = []
@@ -581,6 +674,32 @@ def find_overlap(
     """
     Crude overlap finder for two overlapping scenes. (finds the bounding box around the overlapping area.
     A better way is to straighten the images and then find the overlap and then revert the transform.)
+
+    Parameters
+    ----------
+    dataset_1 : str
+        Path to the first dataset.
+    dataset_2 : str
+        Path to the second dataset.
+    return_images : bool, optional
+        If True, returns the images of the overlapping area, by default False.
+    return_pixels : bool, optional
+        If True, returns the pixel coordinates of the overlapping area, by default False.
+    resampling_resolution : str, optional
+        The resolution to which the datasets should be resampled if their resolutions are different.
+        Can be either "lower" or "higher", by default "lower".
+
+    Returns
+    -------
+    tuple
+        A tuple containing:
+        - The bounding box of the overlapping area as a rasterio.coords.BoundingBox object.
+        - If `return_images` is True, a tuple containing:
+            - The mosaiced image as a numpy array.
+            - The overlapping area of the mosaiced image.
+            - The overlapping area of the first dataset.
+            - The overlapping area of the second dataset.
+        - Scale factors for each dataset if their resolutions were adjusted.
     """
     raster_1 = rasterio.open(dataset_1)
     raster_2 = rasterio.open(dataset_2)
@@ -714,10 +833,37 @@ def make_mosaic(
     resolution_adjustment: bool = False,
     resampling_resolution: str = "lower",
     mosaic_output_path: str = "",
-):
+) -> tuple:
     """
     Creates a mosaic of overlapping scenes. Offsets will be added to the size of the final mosaic if specified.
     NOTE: dataset ground resolutions should be the same. Use `resolution_adjustment` flag to fix the unequal resolutions.
+
+    Parameters
+    ----------
+    dataset_paths : list[str]
+        List of paths to the datasets to be mosaiced.
+    offset_x : int, optional
+        Offset to be added to the width of the mosaic, by default 0.
+    offset_y : int, optional
+        Offset to be added to the height of the mosaic, by default 0.
+    return_warps : bool, optional
+        If True, returns the warped images of the mosaiced datasets, by default False.
+    resolution_adjustment : bool, optional
+        If True, adjusts the resolutions of the datasets to match the selected `resampling_resolution`,
+        by default False.
+    resampling_resolution : str, optional
+        The resolution to which the datasets will be adjusted if `resolution_adjustment` is True.
+        Can be either "lower" or "higher", by default "lower".
+    mosaic_output_path : str, optional
+        If provided, the mosaic will be saved to this path. If not provided, the mosaic will not be saved.
+
+    Returns
+    -------
+    tuple
+        A tuple containing:
+        - The mosaiced image as a numpy array.
+        - A list of warped images if `return_warps` is True, otherwise an empty list.
+        - A list of new transforms for each dataset.
     """
 
     if resolution_adjustment:
@@ -873,6 +1019,35 @@ def make_difference_gif(
     color: tuple = (255, 0, 0),
     origin: tuple = (5, 50),
 ):
+    """Makes a GIF from a list of images with titles and optional scaling.
+
+    Parameters
+    ----------
+    images_list : list[str]
+        List of image file paths to be included in the GIF.
+    output_path : str
+        Output path for the generated GIF.
+    titles_list : list[str], optional
+        List of titles for each image, by default []
+    scale_factor : float, optional
+        Scale factor for downsampling the images, by default -1.0
+    mosaic_scenes : bool, optional
+        Flag to indicate if the images should be mosaiced, by default False
+    mosaic_offsets_x : int, optional
+        Offset mosaic size in the x direction for the mosaic, by default 0
+    mosaic_offsets_y : int, optional
+        Offset mosaic size in the y direction for the mosaic, by default 0
+    fps : int, optional
+        Frames per second for the GIF, by default 3
+    font_scale : float, optional
+        Size of the font for titles, by default 1.5
+    thickness : int, optional
+        Thickness of the text for titles, by default 3
+    color : tuple, optional
+        Color of the text for titles, by default (255, 0, 0)
+    origin : tuple, optional
+        Origin point for the text placement, by default (5, 50)
+    """
     os.makedirs("temp", exist_ok=True)
     temp_paths = [os.path.join("temp", os.path.basename(f)) for f in images_list]
 
@@ -944,6 +1119,22 @@ def shift_targets_to_origin(
     ref_transform: rasterio.Affine,
     tgt_transforms: list[rasterio.Affine],
 ) -> list[np.ndarray]:
+    """Shifts the target images to the origin of the reference image based on their affine transformations.
+
+    Parameters
+    ----------
+    tgt_imgs : list[np.ndarray]
+        Target images to be shifted.
+    ref_transform : rasterio.Affine
+        Reference image affine transformation.
+    tgt_transforms : list[rasterio.Affine]
+        Target images affine transformations.
+
+    Returns
+    -------
+    list[np.ndarray]
+        List of shifted target images.
+    """
     ref_x = abs(ref_transform.c / ref_transform.a)
     ref_y = abs(ref_transform.f / ref_transform.e)
     shifted_tgts = []
@@ -1089,7 +1280,21 @@ def plot_scene_s2(data, data_transform):
     )
 
 
-def resize_bbox(bbox, scale_factor=1.0):
+def resize_bbox(bbox, scale_factor=1.0) -> BoundingBox:
+    """Resizes the bounding box by a given scale factor.
+
+    Parameters
+    ----------
+    bbox : _type_
+        BoundingBox object representing the bounding box to resize.
+    scale_factor : float, optional
+        scale factor to apply to the bounding box dimensions, by default 1.0.
+
+    Returns
+    -------
+    BoundingBox
+        Resized bounding box with the adjusted dimensions.
+    """
     x_dim = bbox.right - bbox.left
     y_dim = bbox.top - bbox.bottom
 
@@ -1167,6 +1372,22 @@ def LLAtoUTM(lla: Union[LLA, LLA3], crs: Union[dict, None]):
 
 
 def utm_bounds(bounds: BoundingBox, crs: dict, skip_stereo: bool = True) -> BoundingBox:
+    """Returns the bounding box in UTM coordinates if the CRS is UTM or Stereographic.
+
+    Parameters
+    ----------
+    bounds : BoundingBox
+        Bounding box to convert.
+    crs : dict
+        CRS data containing projection information.
+    skip_stereo : bool, optional
+        Skip conversion for stereographic projection, by default True.
+
+    Returns
+    -------
+    BoundingBox
+        Converted bounding box in UTM coordinates or the original bounding box if no conversion is needed.
+    """
     has_negative = any(b < 0 for b in bounds)
     if crs == {}:
         print("No CRS data found. Returning original.")
@@ -1189,7 +1410,21 @@ def utm_bounds(bounds: BoundingBox, crs: dict, skip_stereo: bool = True) -> Boun
         return bounds
 
 
-def find_scene_bounding_box_lla(scene: str, scale_factor=1.0):
+def find_scene_bounding_box_lla(scene: str, scale_factor=1.0) -> str:
+    """Finds the bounding box of the scene in LLA coordinates.
+
+    Parameters
+    ----------
+    scene : str
+        Path to the scene file.
+    scale_factor : float, optional
+        Scale factor to resize the bounding box, by default 1.0
+
+    Returns
+    -------
+    str
+        Bounding box in the format "west,south,east,north".
+    """
     raster = rasterio.open(scene)
     raster_bounds = raster.bounds
 
@@ -1215,9 +1450,33 @@ def warp_affine_dataset(
     rotation_angle: float = 0.0,
     scale: float = 1.0,
     write_new_transform: bool = False,  # if writing to an output file, changes the transform of the profile instead of shifting image pixels.
-):
+) -> np.ndarray:
     """
     Transforms the dataset accroding to given translation, rotation and scale params and writes it to the `output_path` file.
+
+    Parameters
+    ----------
+    dataset : Union[str, np.ndarray]
+        The input dataset to be transformed. Can be a file path or a numpy array.
+    output_path : str, optional
+        The path to save the transformed dataset. If empty, the transformed image will not be saved
+    translation_x : float, optional
+        The translation in the x direction, by default 0.0
+    translation_y : float, optional
+        The translation in the y direction, by default 0.0
+    rotation_angle : float, optional
+        The rotation angle in degrees, by default 0.0
+    scale : float, optional
+        The scale factor for the image, by default 1.0
+    write_new_transform : bool, optional
+        If True, the new affine transformation will be written to the output file's profile.
+        If False, the image pixels will be shifted according to the translation parameters, by default False
+
+    Returns
+    -------
+    np.ndarray
+        The transformed image as a numpy array.
+        If `output_path` is provided, the transformed image will also be saved to that path
     """
     if type(dataset) == str:
         raster = rasterio.open(dataset)
@@ -1280,6 +1539,35 @@ def find_corrs_shifts(
     invert_points: bool = True,
     valid_num_points=10,
 ) -> tuple:
+    """Filters the reference and target points based on phase correlation of the grid cells around the points.
+
+    Parameters
+    ----------
+    ref_img : np.ndarray
+        Reference image corresponding to the reference points.
+    tgt_img : np.ndarray
+        Target image corresponding to the target points.
+    ref_points : np.ndarray
+        Reference points to be filtered.
+    tgt_points : np.ndarray
+        Target points to be filtered.
+    corr_win_size : tuple, optional
+        Window size for calculating phase correlation aroung a feature point, by default (25, 25)
+    signal_power_thresh : float, optional
+        Phase correlation signal threshold for filtering points, by default 0.9
+    drop_unbound : bool, optional
+        Drop out og bound points, by default True
+    invert_points : bool, optional
+        invert points to (y, x) format, by default True
+    valid_num_points : int, optional
+        Valid number of points to be found, if fewer points are found, the function will return the original points, by default 10
+
+    Returns
+    -------
+    tuple
+        Filtered reference and target points as numpy arrays.
+        If no valid features are found, returns (ref_points, tgt_points).
+    """
 
     ref_points_temp = ref_points.copy().astype("int")
     tgt_points_temp = tgt_points.copy().astype("int")
@@ -1344,6 +1632,35 @@ def filter_features(
     lower_of_dist_thresh: Union[None, int, float] = None,
     target_info: Union[None, tuple] = None,
 ) -> tuple:
+    """Filters the reference and target points based on distance thresholds and image validity.
+
+    Parameters
+    ----------
+    ref_points : np.ndarray
+        Array of reference points to be filtered.
+    tgt_points : np.ndarray
+        Array of target points to be filtered.
+    ref_img : np.ndarray
+        Reference image corresponding to the reference points.
+    tgt_img : np.ndarray
+        Target image corresponding to the target points.
+    bounding_shape : tuple
+        Shape of the bounding box for the images, used to validate points.
+    dists : np.ndarray
+        Array of distances corresponding to the reference and target points.
+    dist_thresh : Union[None, int, float], optional
+        Threshold for filtering points based on distance, by default None
+    lower_of_dist_thresh : Union[None, int, float], optional
+        Lower threshold for filtering points based on distance, by default None
+    target_info : Union[None, tuple], optional
+        Information about the target, used for logging if no valid features are found, by default None
+
+    Returns
+    -------
+    tuple
+        Filtered reference and target points as numpy arrays.
+        If no valid features are found, returns (None, None).
+    """
 
     if dist_thresh != None:
         if lower_of_dist_thresh != None:
@@ -1398,8 +1715,8 @@ def co_register(
     targets=Union[
         str, np.ndarray, list[str], list[np.ndarray], list[Union[str, np.ndarray]]
     ],
-    number_of_iterations=30,
-    termination_eps=0.03,
+    number_of_iterations: int = 30,
+    termination_eps: float = 0.03,
     of_params: dict = dict(
         # params for ShiTomasi corner detection
         feature_params=dict(
@@ -1422,7 +1739,7 @@ def co_register(
     of_dist_thresh: Union[None, int, float] = 2,  # pixels
     phase_corr_filter: bool = True,
     phase_corr_signal_thresh: float = 0.9,
-    pahse_corr_valid_num_points=10,
+    phase_corr_valid_num_points=10,
     use_overlap: bool = True,
     rethrow_error: bool = False,
     resampling_resolution: str = "lower",
@@ -1434,6 +1751,67 @@ def co_register(
 ) -> tuple:
     """
     Co-registers the target images to the reference image using optical flow and phase correlation.
+
+    Parameters
+    ----------
+    reference: Union[str, np.ndarray]
+        Path to the reference image or a numpy array of the reference image.
+    targets: Union[str, np.ndarray, list[str], list[np.ndarray], list[Union[str, np.ndarray]]]
+        Path to the target image(s) or a numpy array of the target image(s). Can be a single image or a list of images.
+    number_of_iterations: int, Optional
+        Number of iterations for the optical flow algorithm, by default 30.
+    termination_eps: float, Optional
+        Termination epsilon for the optical flow algorithm, by default 0.03.
+    of_params: dict, Optional
+        Parameters for the optical flow algorithm, by default dict(
+            feature_params=dict(maxCorners=20000, qualityLevel=0.1, minDistance=10, blockSize=15),
+            lk_params=dict(winSize=(25, 25), maxLevel=1),
+        ).
+    output_path: str, Optional
+        Path to save the output images, by default "" (no output).
+    export_outputs: bool, Optional
+        Whether to export the output images, by default True.
+    generate_gif: bool, Optional
+        Whether to generate a GIF of the co-registration process, by default True.
+    generate_csv: bool, Optional
+        Whether to generate a CSV file with the co-registration results, by default True.
+    fps: int, Optional
+        Frames per second for the GIF, by default 3.
+    of_dist_thresh: Union[None, int, float], Optional
+        Distance threshold for the optical flow points, by default 2 (pixels).
+    phase_corr_filter: bool, Optional
+        Whether to apply phase correlation filtering, by default True.
+    phase_corr_signal_thresh: float, Optional
+        Signal threshold for the phase correlation filtering, by default 0.9.
+    phase_corr_valid_num_points: int, Optional
+        Minimum number of valid points for the phase correlation filtering, by default 10.
+    use_overlap: bool, Optional
+        Whether to use overlapping regions of the reference and target images, by default True.
+    rethrow_error: bool, Optional
+        Whether to rethrow errors during the co-registration process, by default False.
+    resampling_resolution: str, Optional
+        Resolution for resampling the images, by default "lower". Can be "lower" or "higher".
+    return_shifted_images: bool, Optional
+        Whether to return the shifted images, by default False.
+    laplacian_kernel_size: Union[None, int, list], Optional
+        Kernel size for the Laplacian filter, by default None (no filtering). If a list is provided, it will be applied to each target image.
+    laplacian_for_targets_ids: list | None, Optional
+        List of target image indices for which to apply the Laplacian filter, by default None (apply to all targets).
+    lower_of_dist_thresh: Union[None, int, float], Optional
+        Lower distance threshold for filtering the points, by default None (no lower threshold).
+    band_number: Union[None, int], Optional
+        Band number to use for the target images, by default None (use all bands). If specified, it will select the band from the target images.
+
+    Returns
+    -------
+    tuple
+        A tuple containing list of aligned target images, shifts applied to each target image, and IDs of the processed target images.
+        
+    Raises
+    ------
+    Exception
+        If an error occurs during the co-registration process and `rethrow_error` is True,
+        the error will be rethrown.
     """
 
     run_start = full_start = time.time()
@@ -1698,7 +2076,7 @@ def co_register(
                     tgt_good_temp,
                     of_params["lk_params"]["winSize"],
                     phase_corr_signal_thresh,
-                    valid_num_points=pahse_corr_valid_num_points,
+                    valid_num_points=phase_corr_valid_num_points,
                 )
 
             shift_x, shift_y = np.mean(ref_good_temp - tgt_good_temp, axis=0)
@@ -1911,7 +2289,27 @@ def co_register(
     return tgt_aligned_list, shifts, process_ids
 
 
-def apply_gamma(data, gamma=0.5, stretch_hist: bool = False, adjust_hist: bool = False):
+def apply_gamma(
+    data, gamma=0.5, stretch_hist: bool = False, adjust_hist: bool = False
+) -> np.ndarray:
+    """Applies image enhancement using gamma correction and optional histogram adjustments.
+
+    Parameters
+    ----------
+    data : np.ndarray
+        Data to be enhanced, typically a numpy array representing an image.
+    gamma : float, optional
+        Gamma value for correction, by default 0.5
+    stretch_hist : bool, optional
+        Histogram stretching flag, by default False
+    adjust_hist : bool, optional
+        Equalize histogram flag, by default False
+
+    Returns
+    -------
+    np.ndarray
+        Enhanced image data as a numpy array.
+    """
     data = np.power(data, gamma)
     if adjust_hist:
         data = equalize_hist(data)
@@ -1931,6 +2329,15 @@ def query_stac_server(query: dict, server_url: str, pystac: bool = False) -> lis
     query is a python dictionary to pass as json to the request.
 
     server_url example: https://landsatlook.usgs.gov/stac-server/search
+
+    Parameters
+    ----------
+    query : dict
+        Dictionary containing the query parameters for the STAC server.
+    server_url : str
+        URL of the STAC server to query.
+    pystac : bool, optional
+        If True, uses the pystac library to query the server, by default False.
     """
 
     if pystac:
@@ -1983,7 +2390,30 @@ def find_scenes_dict(
     acceptance_list: list[str] = [],
     remove_duplicate_times: bool = True,
     duplicate_idx: int = 0,
-) -> dict | tuple:
+) -> tuple:
+    """Generates a dictionary of scenes from the provided features.
+
+    Parameters
+    ----------
+    features : list
+        List of features to process, typically from a STAC query.
+        Each feature should have an 'id', 'properties', and 'assets'.
+    one_per_month : bool, optional
+        Only keep one scene per month, by default True
+    start_end_years : list[int], optional
+        Start and end years to filter scenes, by default []
+    acceptance_list : list[str], optional
+        List of asset names to accept, by default []
+    remove_duplicate_times : bool, optional
+        Remmove duplicate times based on the `duplicate_idx`, by default True
+    duplicate_idx : int, optional
+        Index of the duplicate time to keep, by default 0
+
+    Returns
+    -------
+    tuple
+        Dictionary of scenes grouped by path/row and a list of all scenes.
+    """
     scene_list = []
     scene_dict = dict()
     for feature in features:
@@ -2112,6 +2542,35 @@ def get_search_query(
     is_landsat: bool = True,
     extra_query: dict | None = None,
 ) -> dict:
+    """Generates a search query for the STAC server based on the provided parameters.
+
+    Parameters
+    ----------
+    bbox : Union[list, BoundingBox]
+        Bounding box for the search area, either as a list of coordinates or a BoundingBox object.
+    collections : list[str] | None, optional
+        List of collections to search in, by default ["landsat-c2l2-sr", "landsat-c2l2-st"]
+    collection_category : list[str] | None, optional
+        Categories of collections to filter by, by default ["T1", "T2", "RT"]
+    platform : str | list | None, optional
+        Platform name or list of platform names to filter by, by default "LANDSAT_8"
+    start_date : _type_, optional
+        Start date for the search, by default "2014-10-30T00:00:00"
+    end_date : _type_, optional
+        End date for the search, by default "2015-01-23T23:59:59"
+    cloud_cover : int | None, optional
+        Cloud cover percentage to filter by, by default 80
+    is_landsat : bool, optional
+        Is the query for Landsat data, by default True
+    extra_query : dict | None, optional
+        Additional query parameters to include in the search, by default None
+
+    Returns
+    -------
+    dict
+        Dictionary representing the search query to be sent to the STAC server.
+    """
+
     if type(bbox) != list:
         bbox = [bbox.left, bbox.bottom, bbox.right, bbox.top]
     query = {
@@ -2158,14 +2617,47 @@ def make_composite_scene(
     gray_scale: bool = False,
     averaging: bool = False,
     edge_detection: bool = False,
-    edge_detection_mode: Literal["sobel", "laplacian"] = "sobel",
+    edge_detection_mode: Literal["sobel", "laplacian", "canny"] = "canny",
     post_process_only: bool = False,
     reference_band_number: Literal[1, 2, 3] | None = None,
 ) -> np.ndarray:
-    """
-    Creates a composite scene from three individual band datasets.
-    If `post_process_only` is True, it will only apply post-processing without reading the bands.
-    `reference_band_number` is used to select a specific band for adjusting the size and resolution of the scenes according to.
+    """Makes a composite image from the given dataset paths.
+
+    Parameters
+    ----------
+    dataset_paths : list[str] | str
+        List of paths to the dataset bands or a single path to a composite image.
+        If a single path is provided, it is assumed to be a pre-composited image for post-processing.
+    output_path : str | None, optional
+        Path to save the output image, by default None
+    gamma : float, optional
+        Gamma correction value for the images, by default 1.0
+    equalise_histogram : bool, optional
+        Equalise histogram of the images, by default False
+    stretch_contrast : bool, optional
+        Intensity enhancement of the images, by default False
+    gray_scale : bool, optional
+        Use gray scale images, by default False
+    averaging : bool, optional
+        Use averaging for generating gray scale images instead of NTSC formula, by default False
+    edge_detection : bool, optional
+        Using edge detection in the processing, by default False
+    edge_detection_mode : Literal[&quot;sobel&quot;, &quot;laplacian&quot;, &quot;canny&quot;], optional
+        Edge detection mode, by default "canny"
+    post_process_only : bool, optional
+        Only post-process the image if set to True, by default False.
+    reference_band_number : Literal[1, 2, 3] | None, optional
+        Reference band number for the reprojecting and resampling the images to the reference image, by default None
+
+    Returns
+    -------
+    np.ndarray
+        A composite image as a numpy array.
+
+    Raises
+    ------
+    FileNotFoundError
+        If the output file does not exist when `post_process_only` is True.
     """
     if post_process_only:
         if not os.path.isfile(dataset_paths):
@@ -2238,6 +2730,30 @@ def tracking_image(
     line_width: int = 100,
     dot_radius: int = 100,
 ) -> tuple:
+    """Generates an image showing the tracking of points from reference to target images.
+
+    Parameters
+    ----------
+    ref_points : np.ndarray
+        Coordinates of feature points in the reference image.
+    tgt_points : np.ndarray
+        Coordinates of feature points in the target image.
+    ref_img : np.ndarray
+        Reference image.
+    tgt_img : np.ndarray
+        Target image.
+    line_width : int, optional
+        Width of the lines connecting points, by default 100
+    dot_radius : int, optional
+        Radius of the dots marking the points, by default 100
+
+    Returns
+    -------
+    tuple
+        A tracking image with lines drawn between points,
+        a copy of the reference image with points marked,
+        and a copy of the target image with points marked.
+    """
 
     ref_points = ref_points.astype("int")
     tgt_points = tgt_points.astype("int")
@@ -2271,8 +2787,27 @@ def read_kml_polygon(
     is_kml_str: bool = False,
     read_mode: str = "poly",
 ) -> tuple:
-    """
-    `read_mode` could be `poly` or `point`
+    """Reads a KML file and extracts coordinates and bounding box.
+
+    Parameters
+    ----------
+    kml_path : str
+        Path to the KML file or KML string.
+    is_lat_lon : bool, optional
+        Is the coordinate system latitude/longitude? If False, it is UTM, by default True.
+    is_kml_str : bool, optional
+        Is the provided `kml_path` a string containing KML data? If True, it will create a temporary file, by default False.
+    read_mode : str, optional
+        Read mode for KML. Could be `poly` for polygons or `point` for points, by default "poly".
+
+    Returns
+    -------
+    tuple
+        Coordinates as a list of LLA3 or UTM3 objects and a BoundingBox object.
+    Raises
+    ------
+    AssertionError
+        If `read_mode` is not "poly" or "point".
     """
 
     assert read_mode in ["poly", "point"], "read_mode` could be `poly` or `point"
@@ -2324,6 +2859,18 @@ def stream_scene_from_aws(
     aws_session: rasterio.session.AWSSession | None = None,
     metadata_only: bool = False,
 ):
+    """Streams a GeoTIFF scene from AWS S3 using rasterio.
+
+    Parameters
+    ----------
+    geotiff_file : _type_
+        AWS S3 path to the GeoTIFF file, e.g. "s3://bucket/path/to/file.tif"
+    aws_session : rasterio.session.AWSSession | None, optional
+        AWS session for authentication, by default None
+    metadata_only : bool, optional
+        Only retrieve metadata without reading the data, by default False
+    """
+
     def get_data():
         with rasterio.open(geotiff_file) as geo_fp:
             profile = geo_fp.profile
@@ -2349,6 +2896,28 @@ def hillshade(
     angle_altitude: float = 30.0,
     skip_negative: bool = True,
 ) -> np.ndarray:
+    """Generates a hillshade from a 2D numpy array image.
+
+    Parameters
+    ----------
+    array : np.ndarray
+        Array to generate hillshade from. Should be a 2D array.
+    azimuth : float, optional
+        Azimuth angle in degrees, by default 30.0
+    angle_altitude : float, optional
+        Angle of altitude in degrees, by default 30.0
+    skip_negative : bool, optional
+        Skip negative values in the array, by default True.
+
+    Returns
+    -------
+    np.ndarray
+        Hillshade image as a 2D numpy array.
+    Raises
+    ------
+    AssertionError
+        If azimuth is greater than 360 or angle_altitude is greater than 90.
+    """
 
     assert (
         azimuth <= 360.0
@@ -2542,6 +3111,33 @@ def get_pair_dict_alternate(
     reference_month_2: str = "01",
     reference_dict: int = 1,
 ) -> list:
+    """Alternate version of `get_pair_dict` that takes two dictionaries and returns a pair of scenes from each dictionary based on the time distance.
+
+    Parameters
+    ----------
+    data_1 : dict
+        Input scene dictionary 1
+    data_2 : dict
+        Input scene dictionary 2
+    time_distance : str, optional
+        Distance option, by default Literal["closest", "farthest"]
+    reference_month_1 : str, optional
+        Reference month for the first dictionary, by default "01"
+    reference_month_2 : str, optional
+        Reference month for the second dictionary, by default "01"
+    reference_dict : int, optional
+       Reference dictionary to use for the first scene, by default 1.
+
+    Returns
+    -------
+    list
+        List of two scenes, one from each dictionary, based on the time distance.
+
+    Raises
+    ------
+    ValueError
+        Reference dictionary should be either 1 or 2, where 1 is the first dict and 2 is the second dict.
+    """
     pair_1 = get_pair_dict(
         data_1,
         time_distance=time_distance,
@@ -2585,17 +3181,33 @@ def generate_results_from_raw_inputs(
     output_dir: str,
     shifts: list[tuple],
     run_time: float,
-    method: str = "output",
+    output_name: str = "output",
     target_ids: list | None = None,
 ) -> None:
-    """
-    Generates a gif from the processed images and the reference image.
-    Args:
-        ref_image (str): Path to the reference image.
-        processed_output_images (list[str]): List of paths to the processed images.
-        tgt_images (list[str]): List of paths to the target images.
-        output_dir (str): Directory to save the outputs.
-        method (str): Method name to be used in the output names, optional, by default output.
+    """Generates results from raw inputs by creating GIFs and CSV files.
+
+    Parameters
+    ----------
+    ref_image : str
+        Reference image path.
+    processed_output_images : list[str]
+        List of processed output image paths.
+    tgt_images : list[str]
+        List od raw target image paths.
+    output_dir : str
+        Output directory where results will be saved.
+    shifts : list[tuple]
+        List of shifts applied to the images, each shift is a tuple of (x_shift, y_shift).
+    run_time : float
+        Runtime of the processing in seconds.
+    output_name : str, optional
+        Name of the output files, by default "output".
+    target_ids : list | None, optional
+        Ids of the processed target images, by default None.
+
+    Returns
+    -------
+    None
     """
 
     if target_ids is not None:
@@ -2606,7 +3218,7 @@ def generate_results_from_raw_inputs(
         target_ids = list(range(len(processed_output_images)))
 
     os.makedirs(output_dir, exist_ok=True)
-    output_path = os.path.join(output_dir, f"{method}.gif")
+    output_path = os.path.join(output_dir, f"{output_name}.gif")
     if os.path.isfile(output_path):
         os.remove(output_path)
 
@@ -2640,7 +3252,7 @@ def generate_results_from_raw_inputs(
         mosaic_scenes=True,
     )
 
-    output_path = os.path.join(output_dir, f"{method}_raw.gif")
+    output_path = os.path.join(output_dir, f"{output_name}_raw.gif")
     if os.path.isfile(output_path):
         os.remove(output_path)
 
@@ -2673,7 +3285,7 @@ def generate_results_from_raw_inputs(
         mosaic_scenes=True,
     )
 
-    output_path = os.path.join(output_dir, f"{method}.csv")
+    output_path = os.path.join(output_dir, f"{output_name}.csv")
     if os.path.isfile(output_path):
         os.remove(output_path)
     out_ssim_df = pd.DataFrame(
@@ -2710,6 +3322,17 @@ def download(
     bucket: str,
     s3_client: boto3.client,
 ):
+    """Downloads files from an S3 bucket.
+
+    Parameters
+    ----------
+    chunk : tuple
+        Chunk of URLs and local paths to download.
+    bucket : str
+        Bucket name to download files from.
+    s3_client : boto3.client
+        An S3 client to use for downloading files.
+    """
     tasks = []
     for url, path in zip(*chunk):
         print(f"downloading {os.path.basename(path)}")
@@ -2732,19 +3355,42 @@ async def async_download(
     bucket: str,
     s3_client: boto3.client,
 ):
+    """Asynchronously downloads files from S3 bucket.
+
+    Parameters
+    ----------
+    chunk : tuple
+        Chunk of URLs and local paths to download.
+    bucket : str
+        Bucket name to download files from.
+    s3_client : boto3.client
+        An S3 client to use for downloading files.
+    """
     tasks = download(chunk, bucket, s3_client)
     await asyncio.gather(*tasks)
 
 
 def download_files(
     bucket_name: str,
-    s3_urls: str,
-    local_paths: str,
+    s3_urls: list[str],
+    local_paths: list[str],
     num_tasks: int = 8,
     is_async_download: bool = False,
 ):
-    """
-    Download files from S3 bucket using multiple processes.
+    """Downloads files from S3 bucket to local paths.
+
+    Parameters
+    ----------
+    bucket_name : str
+        Name of the S3 bucket to download files from.
+    s3_urls : list[str]
+        List of S3 URLs to download files from.
+    local_paths : list[str]
+        List of local paths to save the downloaded files.
+    num_tasks : int, optional
+        Number of tasks to run in parallel, by default 8.
+    is_async_download : bool, optional
+        Is the download asynchronous, by default False.
     """
     s3_client = boto3.client("s3")
 
@@ -2767,7 +3413,25 @@ def karios(
     tgt_images: list[str],
     output_dir: str,
     karios_executable: str,
-) -> dict:
+) -> tuple:
+    """Runs Karios coregistration on the provided reference and target images.
+
+    Parameters
+    ----------
+    ref_image : str
+        Path to the reference image.
+    tgt_images : list[str]
+        List of target image paths to be coregistered with the reference image.
+    output_dir : str
+        Output directory where the aligned images will be saved.
+    karios_executable : str
+        Path to the Karios executable.
+
+    Returns
+    -------
+    tuple
+        Dictionary of shifts and list of processed target IDs.
+    """
     os.makedirs(output_dir, exist_ok=True)
     tgt_images_copy = tgt_images.copy()
     run_start = full_start = time.time()
@@ -2878,7 +3542,42 @@ def arosics(
     min_reliability: int = 30,
     existing_ref_image: str | None = None,
     existing_tgt_images: list[str] | None = None,
-) -> list:
+) -> tuple:
+    """Runs AROSICS coregistration on the provided reference and target images.
+
+    Parameters
+    ----------
+    ref_image : str
+        Reference image path.
+    tgt_images : list[str]
+        List of target image paths to be coregistered with the reference image.
+    output_dir : str
+        Output directory where the aligned images will be saved.
+    max_points : int, optional
+        MAx number of points to be used for coregistration, by default None
+    r_b4match : int, optional
+        Reference band number for matching, by default 1
+    s_b4match : int, optional
+        Target band number for matching, by default 1
+    max_iter : int, optional
+        Max number of iterations for coregistration, by default 5
+    max_shift : int, optional
+        Maximum allowed shift in pixels, by default 5
+    grid_res : int, optional
+        Local grid resolution in pixels, by default 250
+    min_reliability : int, optional
+        Minimum tie point reliability percentage, by default 30
+    existing_ref_image : str | None, optional
+        Existing reference image to force reference bounding box, by default None
+    existing_tgt_images : list[str] | None, optional
+        Existing target images to force target bounding boxes, by default None
+
+    Returns
+    -------
+    tuple
+        List of shifts applied to each target image in the format [(shift_x, shift_y), ...] and
+        List of target IDs corresponding to the shifts.
+    """
     os.makedirs(output_dir, exist_ok=True)
     run_start = full_start = time.time()
     tgt_images_copy = tgt_images.copy()
@@ -2977,7 +3676,7 @@ def arosics(
 
 def edge_detector(
     img,
-    mode: Literal["sobel", "laplacian", "canny"] = "sobel",
+    mode: Literal["sobel", "laplacian", "canny"] = "canny",
     laplacian_kernel_size: int = 5,
     morphology_kernels: list[tuple[int, int]] | None = [(3, 3), (15, 15)],
 ) -> np.ndarray:
@@ -3008,7 +3707,7 @@ def process_existing_outputs(
     existing_files: list[str],
     output_dir: str,
     edge_detection: bool = False,
-    edge_detection_mode: Literal["sobel", "laplacian"] = "sobel",
+    edge_detection_mode: Literal["sobel", "laplacian", "canny"] = "sobel",
     gamma: float = 1.0,
     equalise_histogram: bool = False,
     stretch_contrast: bool = False,
@@ -3017,6 +3716,33 @@ def process_existing_outputs(
     subdir: str = "true_color",
     force_reprocess: bool = False,
 ):
+    """Processes existing files into composite scenes and saves them to the specified output directory.
+
+    Parameters
+    ----------
+    existing_files : list[str]
+        List of existing file paths to be processed.
+    output_dir : str
+        Output directory where processed files will be saved.
+    edge_detection : bool, optional
+        Using edge detection in the processing, by default False
+    edge_detection_mode : Literal[&quot;sobel&quot;, &quot;laplacian&quot;, &quot;canny&quot;], optional
+        Edge detection mode, by default "canny"
+    gamma : float, optional
+        Gamma correction value for the images, by default 1.0
+    equalise_histogram : bool, optional
+        Equalise histogram of the images, by default False
+    stretch_contrast : bool, optional
+        Intensity enhancement of the images, by default False
+    gray_scale : bool, optional
+        Use gray scale images, by default False
+    averaging : bool, optional
+        Use averaging for generating gray scale images instead of NTSC formula, by default False
+    subdir : str, optional
+        Subdirectory name for processed images, by default "true_color"
+    force_reprocess : bool, optional
+        Force reprocessing of existing files, by default False
+    """
     os.makedirs(output_dir, exist_ok=True)
 
     process_dir = f"{output_dir}/{subdir}"
@@ -3079,7 +3805,7 @@ def download_and_process_pairs(
     keep_original_band_scenes: bool = False,
     reference_month: str | list = "01",
     edge_detection: bool = False,
-    edge_detection_mode: Literal["sobel", "laplacian"] = "sobel",
+    edge_detection_mode: Literal["sobel", "laplacian", "canny"] = "canny",
     gamma: float = 1.0,
     equalise_histogram: bool = False,
     stretch_contrast: bool = False,
@@ -3090,6 +3816,45 @@ def download_and_process_pairs(
     reference_band_number: int | None = None,
     filename_suffix: str = "PROC",
 ):
+    """Downloads scenes from the provided data dictionary or list, processes them into composites, and saves them to the specified output directory.
+
+    Parameters
+    ----------
+    data : dict | list
+        Dictionary or list containing scene data.
+    bands : list[str]
+        Bands to be used for processing, e.g. ["red", "green", "blue"] for true color.
+    output_dir : str
+        Directory where processed scenes will be saved.
+    aws_session : rasterio.session.AWSSession | None, optional
+        AWS session for interacting with AWS, where required, by default None
+    keep_original_band_scenes : bool, optional
+        Keep original band scenes in the output directory, by default False
+    reference_month : str | list, optional
+        Month to use as a reference for finding closest and farthest pairs, by default "01"
+    edge_detection : bool, optional
+        Using edge detection in the processing, by default False
+    edge_detection_mode : Literal[&quot;sobel&quot;, &quot;laplacian&quot;, &quot;canny&quot;], optional
+        Edge detection mode, by default "canny"
+    gamma : float, optional
+        Gamma correction value for the images, by default 1.0
+    equalise_histogram : bool, optional
+        Equalise histogram of the images, by default False
+    stretch_contrast : bool, optional
+        Intensity enhancement of the images, by default False
+    gray_scale : bool, optional
+        Use gray scale images, by default False
+    averaging : bool, optional
+        Use averaging for generating gray scale images instead of NTSC formula, by default False
+    subdir : str, optional
+        Subdirectory name for processed images, by default "true_color"
+    force_reprocess : bool, optional
+        Force reprocessing of existing files, by default False
+    reference_band_number : int | None, optional
+        Reference band number for the reprojecting and resampling the images to the reference image, by default None
+    filename_suffix : str, optional
+        Suffix to be added to the processed files, by default "PROC"
+    """
     os.makedirs(output_dir, exist_ok=True)
 
     process_dir = f"{output_dir}/{subdir}"
@@ -3248,6 +4013,22 @@ def combine_comparison_results(
     coreg_default_params: list[bool] | None,
     dir_suffix: str | None = None,
 ) -> pd.DataFrame:
+    """Creates a Dataframe with the results of the co-registration methods.
+
+    Parameters
+    ----------
+    root_output : str
+        Output directory where the results are stored.
+    coreg_default_params : list[bool] | None
+        Defult parameters for the Co-Register method, by default None
+    dir_suffix : str | None, optional
+        Suffix for the directory names, by default None
+
+    Returns
+    -------
+    pd.DataFrame
+        Dataframe with the results of the co-registration methods.
+    """
 
     dir_suffix = f"_{dir_suffix}" if dir_suffix else ""
 
