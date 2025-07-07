@@ -15,7 +15,7 @@ from rasterio.warp import calculate_default_transform, reproject
 import numpy as np
 import imageio
 import cv2 as cv
-from pyproj import Proj
+from pyproj import Proj, Transformer
 from rasterio.coords import BoundingBox
 from typing import Union
 from itertools import product as itrprod
@@ -1806,7 +1806,7 @@ def co_register(
     -------
     tuple
         A tuple containing list of aligned target images, shifts applied to each target image, and IDs of the processed target images.
-        
+
     Raises
     ------
     Exception
@@ -4123,3 +4123,67 @@ def combine_comparison_results(
         index=False,
     )
     return out_df
+
+
+def reproject_bounds(
+    bounds: list[list | rasterio.coords.BoundingBox],
+    source_crs: str | list[str],
+    dest_crs: str = "4326",
+    inverse_xy: bool = False,
+    rounding_precision: int | None = None,
+) -> list[list]:
+    """
+    Reprojects bounding boxes to the given `crs.
+    """
+
+    if isinstance(source_crs, str):
+        source_crs = [source_crs] * len(bounds)
+
+    for i, crs in enumerate(source_crs):
+        if "EPSG:" not in crs:
+            source_crs[i] = f"EPSG:{crs}"
+
+    new_bounds = []
+    for c, b in zip(source_crs, bounds):
+        transformer = Transformer.from_crs(c, f"EPSG:{dest_crs}")
+        if isinstance(b, rasterio.coords.BoundingBox):
+            xmin = b.left
+            xmax = b.right
+            ymax = b.top
+            ymin = b.bottom
+        else:
+            xmin, ymin, xmax, ymax = b
+        ul = transformer.transform(xmin, ymax)
+        lr = transformer.transform(xmax, ymin)
+
+        new_x = [ul[0], lr[0]]
+        new_y = [ul[1], lr[1]]
+
+        if rounding_precision is not None:
+            new_x = [round(coord, rounding_precision) for coord in new_x]
+            new_y = [round(coord, rounding_precision) for coord in new_y]
+
+        if inverse_xy:
+            new_bounds.append([min(new_y), min(new_x), max(new_y), max(new_x)])
+        else:
+            new_bounds.append([min(new_x), min(new_y), max(new_x), max(new_y)])
+
+    return new_bounds
+
+
+def write_bounds_to_kml(bounds, filename, poly_names: list | None = None):
+    with open(filename, "w") as f:
+        f.write(
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<kml xmlns="http://www.opengis.net/kml/2.2">\n'
+            "<Document>\n"
+        )
+        for i, b in enumerate(bounds):
+            if poly_names is not None:
+                name = poly_names[i]
+            else:
+                name = f"Bound {i + 1}"
+            f.write(
+                f"<Placemark><name>{name}</name><Polygon><outerBoundaryIs><LinearRing><coordinates>{b[0]},{b[1]} {b[2]},{b[1]} {b[2]},{b[3]} {b[0]},{b[3]} {b[0]},{b[1]}</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark>\n"
+            )
+        f.write("</Document>\n</kml>")
