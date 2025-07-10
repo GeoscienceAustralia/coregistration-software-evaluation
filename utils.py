@@ -3540,6 +3540,9 @@ def arosics(
     max_shift: int = 5,
     grid_res: int = 250,
     min_reliability: int = 30,
+    tieP_filter_level: int = 3,
+    rs_max_outlier: float = 10,
+    rs_tolerance: float = 2.5,
     existing_ref_image: str | None = None,
     existing_tgt_images: list[str] | None = None,
 ) -> tuple:
@@ -3567,6 +3570,12 @@ def arosics(
         Local grid resolution in pixels, by default 250
     min_reliability : int, optional
         Minimum tie point reliability percentage, by default 30
+    tieP_filter_level : int, optional
+        Tie point filter level, by default 3
+    rs_max_outlier : float, optional
+        Maximum outlier ratio for robust statistics, by default 10
+    rs_tolerance : float, optional
+        Tolerance for robust statistics, by default 2.5
     existing_ref_image : str | None, optional
         Existing reference image to force reference bounding box, by default None
     existing_tgt_images : list[str] | None, optional
@@ -3612,6 +3621,9 @@ def arosics(
             max_shift=max_shift,
             ignore_errors=True,
             min_reliability=min_reliability,
+            tieP_filter_level=tieP_filter_level,
+            rs_max_outlier=rs_max_outlier,
+            rs_tolerance=rs_tolerance,
             footprint_poly_ref=(
                 None
                 if existing_ref_image is None

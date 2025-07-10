@@ -12,3 +12,4 @@ tools/temp/*
 tools/test*
 landsat-env/*
 dev/*
+temp*
