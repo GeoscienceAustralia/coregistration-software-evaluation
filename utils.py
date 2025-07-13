@@ -3813,13 +3813,15 @@ def process_existing_outputs(
     )
 
 
-def download_and_process_pairs(
-    data: dict | list,
+def download_and_process_series(
+    data: list,
     bands: list[str],
+    bands_urls: list[str],
     output_dir: str,
+    process_dir: str,
+    process_ds_dir: str,
     aws_session: rasterio.session.AWSSession | None = None,
     keep_original_band_scenes: bool = False,
-    reference_month: str | list = "01",
     edge_detection: bool = False,
     edge_detection_mode: Literal["sobel", "laplacian", "canny"] = "canny",
     gamma: float = 1.0,
@@ -3827,12 +3829,10 @@ def download_and_process_pairs(
     stretch_contrast: bool = False,
     gray_scale: bool = False,
     averaging: bool = False,
-    subdir: str = "true_color",
-    force_reprocess: bool = False,
     reference_band_number: int | None = None,
     filename_suffix: str = "PROC",
 ):
-    """Downloads scenes from the provided data dictionary or list, processes them into composites, and saves them to the specified output directory.
+    """Downloads and processes a series of scenes from AWS S3, creating composite images from the specified bands.
 
     Parameters
     ----------
@@ -3842,12 +3842,14 @@ def download_and_process_pairs(
         Bands to be used for processing, e.g. ["red", "green", "blue"] for true color.
     output_dir : str
         Directory where processed scenes will be saved.
+    process_dir : str
+        Directory where original band scenes will be saved.
+    process_ds_dir : str
+        Directory where downsampled scenes will be saved.
     aws_session : rasterio.session.AWSSession | None, optional
         AWS session for interacting with AWS, where required, by default None
     keep_original_band_scenes : bool, optional
         Keep original band scenes in the output directory, by default False
-    reference_month : str | list, optional
-        Month to use as a reference for finding closest and farthest pairs, by default "01"
     edge_detection : bool, optional
         Using edge detection in the processing, by default False
     edge_detection_mode : Literal[&quot;sobel&quot;, &quot;laplacian&quot;, &quot;canny&quot;], optional
@@ -3862,67 +3864,20 @@ def download_and_process_pairs(
         Use gray scale images, by default False
     averaging : bool, optional
         Use averaging for generating gray scale images instead of NTSC formula, by default False
-    subdir : str, optional
-        Subdirectory name for processed images, by default "true_color"
-    force_reprocess : bool, optional
-        Force reprocessing of existing files, by default False
     reference_band_number : int | None, optional
         Reference band number for the reprojecting and resampling the images to the reference image, by default None
     filename_suffix : str, optional
         Suffix to be added to the processed files, by default "PROC"
     """
-    os.makedirs(output_dir, exist_ok=True)
 
-    process_dir = f"{output_dir}/{subdir}"
-    process_ds_dir = f"{output_dir}/{subdir}_ds"
-
-    if force_reprocess:
-        print("Force reprocessing is enabled, all existing files will be reprocessed.")
-        shutil.rmtree(process_dir, ignore_errors=True)
-        shutil.rmtree(process_ds_dir, ignore_errors=True)
-
-    os.makedirs(process_dir, exist_ok=True)
-    os.makedirs(process_ds_dir, exist_ok=True)
-
-    date_dict = data[0] if type(data) == list else data
-
-    date = list(date_dict.keys())[0]
-
-    b0_url = date_dict[date][0][bands[0]]
-    b1_url = date_dict[date][0][bands[1]]
-    b2_url = date_dict[date][0][bands[2]]
-
-    b0_band_suffix = os.path.splitext(os.path.basename(b0_url))[0].split("_")[-1]
-    b1_band_suffix = os.path.splitext(os.path.basename(b1_url))[0].split("_")[-1]
-    b2_band_suffix = os.path.splitext(os.path.basename(b2_url))[0].split("_")[-1]
+    b0_band_suffix = os.path.splitext(os.path.basename(bands_urls[0]))[0].split("_")[-1]
+    b1_band_suffix = os.path.splitext(os.path.basename(bands_urls[1]))[0].split("_")[-1]
+    b2_band_suffix = os.path.splitext(os.path.basename(bands_urls[2]))[0].split("_")[-1]
 
     ext = os.path.splitext(os.path.basename(b0_url))[1]
 
-    if type(data) == list and type(reference_month) == str:
-        reference_month = [reference_month] * len(data)
-
-    if type(data) == list:
-        closest_pair = get_pair_dict_alternate(
-            data[0],
-            data[1],
-            "closest",
-            reference_month_1=reference_month[0],
-            reference_month_2=reference_month[1],
-        )
-        farthest_pair = get_pair_dict_alternate(
-            data[0],
-            data[1],
-            "farthest",
-            reference_month_1=reference_month[0],
-            reference_month_2=reference_month[1],
-        )
-    else:
-        closest_pair = get_pair_dict(data, "closest", reference_month=reference_month)
-        farthest_pair = get_pair_dict(data, "farthest", reference_month=reference_month)
-
-    pr_date_list = closest_pair + [farthest_pair[1]]
     output_splits = output_dir.split("_")
-    for j, el in enumerate(pr_date_list):
+    for j, el in enumerate(data):
         path_row = ""
         for s in output_splits:
             if f"_{s}_" in el["scene_name"]:
@@ -4006,6 +3961,131 @@ def download_and_process_pairs(
             )
 
     print("Processing scenes done!")
+
+
+def download_and_process_pairs(
+    data: dict | list,
+    bands: list[str],
+    output_dir: str,
+    aws_session: rasterio.session.AWSSession | None = None,
+    keep_original_band_scenes: bool = False,
+    reference_month: str | list = "01",
+    edge_detection: bool = False,
+    edge_detection_mode: Literal["sobel", "laplacian", "canny"] = "canny",
+    gamma: float = 1.0,
+    equalise_histogram: bool = False,
+    stretch_contrast: bool = False,
+    gray_scale: bool = False,
+    averaging: bool = False,
+    subdir: str = "true_color",
+    force_reprocess: bool = False,
+    reference_band_number: int | None = None,
+    filename_suffix: str = "PROC",
+):
+    """Downloads scenes from the provided data dictionary or list, processes them into composites, and saves them to the specified output directory.
+
+    Parameters
+    ----------
+    data : dict | list
+        Dictionary or list containing scene data.
+    bands : list[str]
+        Bands to be used for processing, e.g. ["red", "green", "blue"] for true color.
+    output_dir : str
+        Directory where processed scenes will be saved.
+    aws_session : rasterio.session.AWSSession | None, optional
+        AWS session for interacting with AWS, where required, by default None
+    keep_original_band_scenes : bool, optional
+        Keep original band scenes in the output directory, by default False
+    reference_month : str | list, optional
+        Month to use as a reference for finding closest and farthest pairs, by default "01"
+    edge_detection : bool, optional
+        Using edge detection in the processing, by default False
+    edge_detection_mode : Literal[&quot;sobel&quot;, &quot;laplacian&quot;, &quot;canny&quot;], optional
+        Edge detection mode, by default "canny"
+    gamma : float, optional
+        Gamma correction value for the images, by default 1.0
+    equalise_histogram : bool, optional
+        Equalise histogram of the images, by default False
+    stretch_contrast : bool, optional
+        Intensity enhancement of the images, by default False
+    gray_scale : bool, optional
+        Use gray scale images, by default False
+    averaging : bool, optional
+        Use averaging for generating gray scale images instead of NTSC formula, by default False
+    subdir : str, optional
+        Subdirectory name for processed images, by default "true_color"
+    force_reprocess : bool, optional
+        Force reprocessing of existing files, by default False
+    reference_band_number : int | None, optional
+        Reference band number for the reprojecting and resampling the images to the reference image, by default None
+    filename_suffix : str, optional
+        Suffix to be added to the processed files, by default "PROC"
+    """
+    os.makedirs(output_dir, exist_ok=True)
+
+    process_dir = f"{output_dir}/{subdir}"
+    process_ds_dir = f"{output_dir}/{subdir}_ds"
+
+    if force_reprocess:
+        print("Force reprocessing is enabled, all existing files will be reprocessed.")
+        shutil.rmtree(process_dir, ignore_errors=True)
+        shutil.rmtree(process_ds_dir, ignore_errors=True)
+
+    os.makedirs(process_dir, exist_ok=True)
+    os.makedirs(process_ds_dir, exist_ok=True)
+
+    date_dict = data[0] if type(data) == list else data
+
+    date = list(date_dict.keys())[0]
+
+    b0_url = date_dict[date][0][bands[0]]
+    b1_url = date_dict[date][0][bands[1]]
+    b2_url = date_dict[date][0][bands[2]]
+    bands_urls = [b0_url, b1_url, b2_url]
+
+    if type(data) == list and type(reference_month) == str:
+        reference_month = [reference_month] * len(data)
+
+    if type(data) == list:
+        closest_pair = get_pair_dict_alternate(
+            data[0],
+            data[1],
+            "closest",
+            reference_month_1=reference_month[0],
+            reference_month_2=reference_month[1],
+        )
+        farthest_pair = get_pair_dict_alternate(
+            data[0],
+            data[1],
+            "farthest",
+            reference_month_1=reference_month[0],
+            reference_month_2=reference_month[1],
+        )
+    else:
+        closest_pair = get_pair_dict(data, "closest", reference_month=reference_month)
+        farthest_pair = get_pair_dict(data, "farthest", reference_month=reference_month)
+
+    pr_date_list = closest_pair + [farthest_pair[1]]
+
+    download_and_process_series(
+        pr_date_list,
+        bands,
+        bands_urls,
+        output_dir,
+        process_dir,
+        process_ds_dir,
+        aws_session,
+        keep_original_band_scenes,
+        edge_detection,
+        edge_detection_mode,
+        gamma,
+        equalise_histogram,
+        stretch_contrast,
+        gray_scale,
+        averaging,
+        reference_band_number,
+        filename_suffix,
+    )
 
     cols = ["Reference", "Closest_target", "Farthest_target"]
     df = pd.DataFrame(
