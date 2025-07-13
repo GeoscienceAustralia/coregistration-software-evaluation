@@ -3816,7 +3816,7 @@ def process_existing_outputs(
 def download_and_process_series(
     data: list,
     bands: list[str],
-    bands_urls: list[str],
+    bands_suffixes: list[str],
     output_dir: str,
     process_dir: str,
     process_ds_dir: str,
@@ -3840,6 +3840,8 @@ def download_and_process_series(
         Dictionary or list containing scene data.
     bands : list[str]
         Bands to be used for processing, e.g. ["red", "green", "blue"] for true color.
+    bands_suffixes : list[str]
+        Suffixes for the bands, e.g. ["_B04", "_B03", "_B02"] for Sentinel-2.
     output_dir : str
         Directory where processed scenes will be saved.
     process_dir : str
@@ -3870,9 +3872,7 @@ def download_and_process_series(
         Suffix to be added to the processed files, by default "PROC"
     """
 
-    b0_band_suffix = os.path.splitext(os.path.basename(bands_urls[0]))[0].split("_")[-1]
-    b1_band_suffix = os.path.splitext(os.path.basename(bands_urls[1]))[0].split("_")[-1]
-    b2_band_suffix = os.path.splitext(os.path.basename(bands_urls[2]))[0].split("_")[-1]
+    b0_band_suffix, b1_band_suffix, b2_band_suffix = bands_suffixes
 
     ext = os.path.splitext(os.path.basename(b0_url))[1]
 
@@ -3963,6 +3963,39 @@ def download_and_process_series(
     print("Processing scenes done!")
 
 
+def get_band_suffixes(
+    data: dict | list,
+    bands: list[str],
+) -> list[str]:
+    """Extracts band suffixes from the provided data dictionary or list.
+
+    Parameters
+    ----------
+    data : dict | list
+        Dictionary or list containing scene data, where each entry has a date key and a list of band URLs.
+    bands : list[str]
+        List of bands for which to extract the suffixes, e.g. ["red", "green", "blue"].
+
+    Returns
+    -------
+    list[str]
+        List of band suffixes corresponding to the provided bands.
+    """
+    date_dict = data[0] if type(data) == list else data
+
+    date = list(date_dict.keys())[0]
+
+    b0_url = date_dict[date][0][bands[0]]
+    b1_url = date_dict[date][0][bands[1]]
+    b2_url = date_dict[date][0][bands[2]]
+
+    b0_band_suffix = os.path.splitext(os.path.basename(b0_url))[0].split("_")[-1]
+    b1_band_suffix = os.path.splitext(os.path.basename(b1_url))[0].split("_")[-1]
+    b2_band_suffix = os.path.splitext(os.path.basename(b2_url))[0].split("_")[-1]
+    bands_suffixes = [b0_band_suffix, b1_band_suffix, b2_band_suffix]
+    return bands_suffixes
+
+
 def download_and_process_pairs(
     data: dict | list,
     bands: list[str],
@@ -4034,14 +4067,7 @@ def download_and_process_pairs(
     os.makedirs(process_dir, exist_ok=True)
     os.makedirs(process_ds_dir, exist_ok=True)
 
-    date_dict = data[0] if type(data) == list else data
-
-    date = list(date_dict.keys())[0]
-
-    b0_url = date_dict[date][0][bands[0]]
-    b1_url = date_dict[date][0][bands[1]]
-    b2_url = date_dict[date][0][bands[2]]
-    bands_urls = [b0_url, b1_url, b2_url]
+    bands_suffixes = get_band_suffixes(data, bands)
 
     if type(data) == list and type(reference_month) == str:
         reference_month = [reference_month] * len(data)
@@ -4070,7 +4096,7 @@ def download_and_process_pairs(
     download_and_process_series(
         pr_date_list,
         bands,
-        bands_urls,
+        bands_suffixes,
         output_dir,
         process_dir,
         process_ds_dir,
