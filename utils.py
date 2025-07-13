@@ -40,9 +40,13 @@ import time
 import asyncio
 from subprocess import run
 import shlex
-from arosics import COREG_LOCAL
 from cv2 import Sobel, Laplacian, Canny
 import PIL
+
+try:
+    from arosics import COREG_LOCAL
+except ImportError:
+    print("AROSICS not installed. `arosics` function will not work.")
 
 PIL.Image.MAX_IMAGE_PIXELS = None
 
