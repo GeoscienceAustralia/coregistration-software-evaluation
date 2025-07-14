@@ -3946,7 +3946,8 @@ def download_and_process_series(
             else:
                 band_img, band_meta = stream_scene_from_aws(band_url, aws_session)
                 with rasterio.open(band_output, "w", **band_meta["profile"]) as ds:
-                    ds.write(band_img[0, :, :], 1)
+                    for i in range(band_meta["profile"]["count"]):
+                        ds.write(band_img[0, :, :], i + 1)
 
         if download_only:
             print("Download only mode is enabled, skipping processing.")
