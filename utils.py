@@ -3831,7 +3831,9 @@ def download_and_process_series(
     averaging: bool = False,
     reference_band_number: int | None = None,
     filename_suffix: str = "PROC",
-):
+    download_only: bool = False,
+    composite_band_indexes: list[int] = [0, 1, 2],
+) -> list:
     """Downloads and processes a series of scenes from AWS S3, creating composite images from the specified bands.
 
     Parameters
@@ -3870,9 +3872,29 @@ def download_and_process_series(
         Reference band number for the reprojecting and resampling the images to the reference image, by default None
     filename_suffix : str, optional
         Suffix to be added to the processed files, by default "PROC"
+    download_only : bool, optional
+        If True, only downloads the scenes without processing them, by default False
+    composite_band_indexes : list[int], optional
+        List of indexes for the bands to be used in the composite image, by default [0, 1, 2]
+    Returns
+    -------
+    list
+        List of dictionaries with scene data, including local paths to the processed scenes.
+    Raises
+    ------
+    ValueError
+        If the composite band indexes are not a list of 3 indexes.
+    ValueError
+        If a band is not found in the scene data.
     """
+    if len(composite_band_indexes) != 3:
+        raise ValueError(
+            "Composite band indexes should be a list of 3 indexes, e.g. [0, 1, 2] for RGB."
+        )
 
-    b0_band_suffix, b1_band_suffix, b2_band_suffix = bands_suffixes
+    os.makedirs(output_dir, exist_ok=True)
+    os.makedirs(process_dir, exist_ok=True)
+    os.makedirs(process_ds_dir, exist_ok=True)
 
     ext = os.path.splitext(os.path.basename(data[0][bands[0]]))[1]
     print("Using file extension:", ext)
@@ -3886,55 +3908,69 @@ def download_and_process_series(
                 break
         path_row_str = f" and path_row: {path_row}" if path_row else ""
         print(
-            f"Now downloading and processing scenes for {el['scene_name']}{path_row_str}, scene {j + 1} of 3.",
+            f"Now downloading and processing scenes for {el['scene_name']}{path_row_str}, scene {j + 1} of {len(data)}.",
         )
-        b0_url = el[bands[0] + "_alternate"]
-        b1_url = el[bands[1] + "_alternate"]
-        b2_url = el[bands[2] + "_alternate"]
         originals_dir = f"{output_dir}/Originals/{el['scene_name']}"
+        os.makedirs(originals_dir, exist_ok=True)
+        for band in bands:
+            if band not in el:
+                raise ValueError(f"Band {band} not found in the scene data.")
+            band_url = el[band + "_alternate"]
 
-        proc_file = f"{os.path.join(process_dir, os.path.basename(originals_dir))}_{filename_suffix}{ext}"
-        post_process_only = False
-        if os.path.isfile(proc_file):
-            print(f"Scene {proc_file} already exists, skipping.")
+            proc_file = f"{os.path.join(process_dir, os.path.basename(originals_dir))}_{filename_suffix}{ext}"
+            post_process_only = False
+            if os.path.isfile(proc_file):
+                print(f"Scene {proc_file} already exists, skipping.")
+                el["local_path"] = proc_file
+                el["local_path_ds"] = proc_file
+                if (
+                    (not edge_detection)
+                    and (not equalise_histogram)
+                    and (not stretch_contrast)
+                ):
+                    continue
+                else:
+                    post_process_only = True
+
+            band_output = os.path.join(originals_dir, os.path.basename(band_url))
+            if os.path.isfile(band_output):
+                print(f"Original band files already exist, skipping.")
+            else:
+                band_img, band_meta = stream_scene_from_aws(band_url, aws_session)
+                with rasterio.open(band_output, "w", **band_meta["profile"]) as ds:
+                    ds.write(band_img[0, :, :], 1)
+
+        if download_only:
+            print("Download only mode is enabled, skipping processing.")
             el["local_path"] = proc_file
             el["local_path_ds"] = proc_file
-            if (
-                (not edge_detection)
-                and (not equalise_histogram)
-                and (not stretch_contrast)
-            ):
-                continue
-            else:
-                post_process_only = True
-
-        os.makedirs(originals_dir, exist_ok=True)
-        b0_output = os.path.join(originals_dir, os.path.basename(b0_url))
-        b1_output = os.path.join(originals_dir, os.path.basename(b1_url))
-        b2_output = os.path.join(originals_dir, os.path.basename(b2_url))
-
-        if (
-            os.path.isfile(b0_output)
-            and os.path.isfile(b1_output)
-            and os.path.isfile(b2_output)
-        ):
-            print(f"Original band files already exist, skipping.")
-        else:
-            b0_img, b0_meta = stream_scene_from_aws(b0_url, aws_session)
-            b1_img, b1_meta = stream_scene_from_aws(b1_url, aws_session)
-            b2_img, b2_meta = stream_scene_from_aws(b2_url, aws_session)
-
-            imgs = [b0_img, b1_img, b2_img]
-            outputs = [b0_output, b1_output, b2_output]
-            metas = [b0_meta, b1_meta, b2_meta]
-            for i, img in enumerate(imgs):
-                with rasterio.open(outputs[i], "w", **metas[i]["profile"]) as ds:
-                    ds.write(img[0, :, :], 1)
+            continue
 
         files = glob.glob(f"{originals_dir}/**")
-        b0_band = list(filter(lambda f: f.endswith(f"{b0_band_suffix}{ext}"), files))[0]
-        b1_band = list(filter(lambda f: f.endswith(f"{b1_band_suffix}{ext}"), files))[0]
-        b2_band = list(filter(lambda f: f.endswith(f"{b2_band_suffix}{ext}"), files))[0]
+        b0_band = list(
+            filter(
+                lambda f: f.endswith(
+                    f"{bands_suffixes[composite_band_indexes[0]]}{ext}"
+                ),
+                files,
+            )
+        )[0]
+        b1_band = list(
+            filter(
+                lambda f: f.endswith(
+                    f"{bands_suffixes[composite_band_indexes[1]]}{ext}"
+                ),
+                files,
+            )
+        )[0]
+        b2_band = list(
+            filter(
+                lambda f: f.endswith(
+                    f"{bands_suffixes[composite_band_indexes[2]]}{ext}"
+                ),
+                files,
+            )
+        )[0]
         proc_bands = [b0_band, b1_band, b2_band]
         proc_file_ds = os.path.join(process_ds_dir, os.path.basename(proc_file))
         make_composite_scene(
@@ -3962,6 +3998,7 @@ def download_and_process_series(
             )
 
     print("Processing scenes done!")
+    return data
 
 
 def get_band_suffixes(
@@ -4123,7 +4160,7 @@ def download_and_process_pairs(
 
     pr_date_list = closest_pair + [farthest_pair[1]]
 
-    download_and_process_series(
+    pr_date_list_processed = download_and_process_series(
         pr_date_list,
         bands,
         bands_suffixes,
@@ -4150,7 +4187,7 @@ def download_and_process_pairs(
                 el["local_path"],
                 el["local_path_ds"],
             ]
-            for i, el in enumerate(pr_date_list)
+            for i, el in enumerate(pr_date_list_processed)
         },
         columns=cols,
     )
