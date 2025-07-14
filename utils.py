@@ -3874,7 +3874,8 @@ def download_and_process_series(
 
     b0_band_suffix, b1_band_suffix, b2_band_suffix = bands_suffixes
 
-    ext = os.path.splitext(os.path.basename(b0_url))[1]
+    ext = os.path.splitext(os.path.basename(data[0][bands[0]]))[1]
+    print("Using file extension:", ext)
 
     output_splits = output_dir.split("_")
     for j, el in enumerate(data):
@@ -3964,6 +3965,35 @@ def download_and_process_series(
 
 
 def get_band_suffixes(
+    data: dict,
+    bands: list[str],
+) -> list[str]:
+    """Extracts band suffixes from the provided data dictionary or list.
+
+    Parameters
+    ----------
+    data : dict | list
+        Dictionary containing scene data, where each entry has a date key and a list of band URLs.
+    bands : list[str]
+        List of bands for which to extract the suffixes, e.g. ["red", "green", "blue"].
+
+    Returns
+    -------
+    list[str]
+        List of band suffixes corresponding to the provided bands.
+    """
+    bands_suffixes = []
+    for band in bands:
+        if band not in data:
+            raise ValueError(f"Band {band} not found in the data.")
+        band_url = data[band]
+        band_suffix = os.path.splitext(os.path.basename(band_url))[0].split("_")
+        band_suffix = band_suffix[-1] if band_suffix else ""
+        bands_suffixes.append(band_suffix)
+    return bands_suffixes
+
+
+def _get_band_suffixes(
     data: dict | list,
     bands: list[str],
 ) -> list[str]:
@@ -3985,14 +4015,14 @@ def get_band_suffixes(
 
     date = list(date_dict.keys())[0]
 
-    b0_url = date_dict[date][0][bands[0]]
-    b1_url = date_dict[date][0][bands[1]]
-    b2_url = date_dict[date][0][bands[2]]
-
-    b0_band_suffix = os.path.splitext(os.path.basename(b0_url))[0].split("_")[-1]
-    b1_band_suffix = os.path.splitext(os.path.basename(b1_url))[0].split("_")[-1]
-    b2_band_suffix = os.path.splitext(os.path.basename(b2_url))[0].split("_")[-1]
-    bands_suffixes = [b0_band_suffix, b1_band_suffix, b2_band_suffix]
+    bands_suffixes = []
+    for band in bands:
+        if band not in date_dict[date][0]:
+            raise ValueError(f"Band {band} not found in the data for date {date}.")
+        band_url = date_dict[date][0][band]
+        band_suffix = os.path.splitext(os.path.basename(band_url))[0].split("_")
+        band_suffix = band_suffix[-1] if band_suffix else ""
+        bands_suffixes.append(band_suffix)
     return bands_suffixes
 
 
@@ -4067,7 +4097,7 @@ def download_and_process_pairs(
     os.makedirs(process_dir, exist_ok=True)
     os.makedirs(process_ds_dir, exist_ok=True)
 
-    bands_suffixes = get_band_suffixes(data, bands)
+    bands_suffixes = _get_band_suffixes(data, bands[0:3])
 
     if type(data) == list and type(reference_month) == str:
         reference_month = [reference_month] * len(data)
