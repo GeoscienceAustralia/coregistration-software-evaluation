@@ -3818,8 +3818,8 @@ def download_and_process_series(
     bands: list[str],
     bands_suffixes: list[str],
     output_dir: str,
-    process_dir: str,
-    process_ds_dir: str,
+    process_dir: str | None = None,
+    process_ds_dir: str | None = None,
     aws_session: rasterio.session.AWSSession | None = None,
     keep_original_band_scenes: bool = False,
     edge_detection: bool = False,
@@ -3893,8 +3893,15 @@ def download_and_process_series(
         )
 
     os.makedirs(output_dir, exist_ok=True)
-    os.makedirs(process_dir, exist_ok=True)
-    os.makedirs(process_ds_dir, exist_ok=True)
+    if not download_only:
+        assert (
+            process_dir is not None
+        ), "process_dir must be provided if not in download_only mode."
+        assert (
+            process_ds_dir is not None
+        ), "process_ds_dir must be provided if not in download_only mode."
+        os.makedirs(process_dir, exist_ok=True)
+        os.makedirs(process_ds_dir, exist_ok=True)
 
     ext = os.path.splitext(os.path.basename(data[0][bands[0]]))[1]
     print("Using file extension:", ext)
@@ -3917,20 +3924,21 @@ def download_and_process_series(
                 raise ValueError(f"Band {band} not found in the scene data.")
             band_url = el[band + "_alternate"]
 
-            proc_file = f"{os.path.join(process_dir, os.path.basename(originals_dir))}_{filename_suffix}{ext}"
             post_process_only = False
-            if os.path.isfile(proc_file):
-                print(f"Scene {proc_file} already exists, skipping.")
-                el["local_path"] = proc_file
-                el["local_path_ds"] = proc_file
-                if (
-                    (not edge_detection)
-                    and (not equalise_histogram)
-                    and (not stretch_contrast)
-                ):
-                    continue
-                else:
-                    post_process_only = True
+            if not download_only:
+                proc_file = f"{os.path.join(process_dir, os.path.basename(originals_dir))}_{filename_suffix}{ext}"
+                if os.path.isfile(proc_file):
+                    print(f"Scene {proc_file} already exists, skipping.")
+                    el["local_path"] = proc_file
+                    el["local_path_ds"] = proc_file
+                    if (
+                        (not edge_detection)
+                        and (not equalise_histogram)
+                        and (not stretch_contrast)
+                    ):
+                        continue
+                    else:
+                        post_process_only = True
 
             band_output = os.path.join(originals_dir, os.path.basename(band_url))
             if os.path.isfile(band_output):
@@ -3942,8 +3950,6 @@ def download_and_process_series(
 
         if download_only:
             print("Download only mode is enabled, skipping processing.")
-            el["local_path"] = proc_file
-            el["local_path_ds"] = proc_file
             continue
 
         files = glob.glob(f"{originals_dir}/**")
