@@ -42,6 +42,9 @@ from subprocess import run
 import shlex
 from cv2 import Sobel, Laplacian, Canny
 import PIL
+import rioxarray as rxr
+import xarray as xr
+import pystac
 
 try:
     from arosics import COREG_LOCAL
@@ -412,6 +415,45 @@ def readjust_origin_for_new_pixel_size(
     return rasterio.Affine(
         transform.a, transform.b, new_orig_x, transform.d, transform.e, new_orig_y
     )
+
+
+def resample_xarray_dataset(
+    dataset: xr.Dataset | str,
+    scale_factor: Union[float, list[float]] = 1.0,
+    output_path: str = "",
+) -> xr.Dataset:
+    """
+    Resamples an xarray dataset to a new resolution.
+    Parameters
+    ----------
+    dataset : xr.Dataset | str
+        The input dataset to be resampled.
+    scale_factor : float | list[float], optional
+        The scaling factor(s) for the resampling, by default 1.0 (no resampling).
+    output_path : str, optional
+        The path to save the resampled dataset, by default an empty string (no saving).
+    """
+    if isinstance(dataset, str):
+        dataset = rxr.open_rasterio(dataset)
+
+    if isinstance(scale_factor, float):
+        scale_factor = [scale_factor, scale_factor]
+    elif isinstance(scale_factor, list) and len(scale_factor) == 1:
+        scale_factor = [scale_factor[0], scale_factor[0]]
+
+    new_width = int(dataset.rio.width * scale_factor[1])
+    new_height = int(dataset.rio.height * scale_factor[0])
+
+    resampled_dataset = dataset.rio.reproject(
+        dataset.rio.crs,
+        shape=(new_height, new_width),
+        resampling=Resampling.bilinear,
+    )
+
+    if output_path:
+        resampled_dataset.rio.to_raster(output_path)
+
+    return resampled_dataset
 
 
 def downsample_dataset(
@@ -2326,7 +2368,12 @@ def apply_gamma(
     return data
 
 
-def query_stac_server(query: dict, server_url: str, pystac: bool = False) -> list:
+def query_stac_server(
+    query: dict,
+    server_url: str,
+    pystac: bool = False,
+    return_pystac_items: bool = False,
+) -> list | pystac.ItemCollection:
     """
     Queries the stac-server (STAC) backend.
     This function handles pagination.
@@ -2342,11 +2389,15 @@ def query_stac_server(query: dict, server_url: str, pystac: bool = False) -> lis
         URL of the STAC server to query.
     pystac : bool, optional
         If True, uses the pystac library to query the server, by default False.
+    return_pystac_items : bool, optional
+        If True, returns pystac items instead of raw features, by default False.
     """
 
     if pystac:
         client = Client.open(server_url)
         search = client.search(**query)
+        if return_pystac_items:
+            return search.item_collection()
         features = list(search.item_collection())
         if len(features) == 0:
             print("No features found.")
@@ -3833,6 +3884,7 @@ def download_and_process_series(
     filename_suffix: str = "PROC",
     download_only: bool = False,
     composite_band_indexes: list[int] = [0, 1, 2],
+    scale_factor: float = 0.2,
 ) -> list:
     """Downloads and processes a series of scenes from AWS S3, creating composite images from the specified bands.
 
@@ -3876,6 +3928,8 @@ def download_and_process_series(
         If True, only downloads the scenes without processing them, by default False
     composite_band_indexes : list[int], optional
         List of indexes for the bands to be used in the composite image, by default [0, 1, 2]
+    scale_factor : float, optional
+        Scale factor for downsampling the processed scenes, by default 0.2
     Returns
     -------
     list
@@ -3993,7 +4047,7 @@ def download_and_process_series(
             post_process_only,
             reference_band_number,
         )
-        downsample_dataset(proc_file, 0.2, proc_file_ds)
+        downsample_dataset(proc_file, scale_factor, proc_file_ds)
 
         el["local_path"] = proc_file
         el["local_path_ds"] = proc_file_ds
