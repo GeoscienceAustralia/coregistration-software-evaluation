@@ -474,7 +474,7 @@ def downsample_dataset(
     dataset_path : str
         Path to the dataset to be downsampled.
     scale_factor : float or list[float], optional
-        Scale factor for downsampling. If a single float is provided, it will be applied to both dimensions.
+        Scale factor for downsampling. If a single float is provided, it will be applied to both dimensions (height, width).
         If a list of two floats is provided, they will be applied to the height and width respectively.
         Defaults to 1.0 (no downsampling).
     output_file : str, optional
@@ -2933,6 +2933,8 @@ def stream_scene_from_aws(
             crs = geo_fp.crs
             if not metadata_only:
                 scene = geo_fp.read()
+            else:
+                scene = None
         return scene, profile, bounds, crs
 
     scene = np.zeros(0)
@@ -3973,81 +3975,92 @@ def download_and_process_series(
         )
         originals_dir = f"{output_dir}/Originals/{el['scene_name']}"
         os.makedirs(originals_dir, exist_ok=True)
-        for band in bands:
-            if band not in el:
-                raise ValueError(f"Band {band} not found in the scene data.")
-            band_url = el[band + "_alternate"]
 
-            post_process_only = False
-            if not download_only:
-                proc_file = f"{os.path.join(process_dir, os.path.basename(originals_dir))}_{filename_suffix}{ext}"
-                if os.path.isfile(proc_file):
-                    print(f"Scene {proc_file} already exists, skipping.")
-                    el["local_path"] = proc_file
-                    el["local_path_ds"] = proc_file
-                    if (
-                        (not edge_detection)
-                        and (not equalise_histogram)
-                        and (not stretch_contrast)
-                    ):
-                        continue
-                    else:
-                        post_process_only = True
+        post_process_only = False
+        proc_exists = False
+        proc_ds_exists = False
+        proc_file = f"{os.path.join(process_dir, os.path.basename(originals_dir))}_{filename_suffix}{ext}"
+        proc_file_ds = os.path.join(process_ds_dir, os.path.basename(proc_file))
 
-            band_output = os.path.join(originals_dir, os.path.basename(band_url))
-            if os.path.isfile(band_output):
-                print(f"Original band files already exist, skipping.")
-            else:
-                band_img, band_meta = stream_scene_from_aws(band_url, aws_session)
-                with rasterio.open(band_output, "w", **band_meta["profile"]) as ds:
-                    for i in range(band_meta["profile"]["count"]):
-                        ds.write(band_img[i, :, :], i + 1)
+        if not download_only:
+            if os.path.isfile(proc_file):
+                print(f"Scene {proc_file} already exists, skipping.")
+                el["local_path"] = proc_file
+                if (
+                    (not edge_detection)
+                    and (not equalise_histogram)
+                    and (not stretch_contrast)
+                ):
+                    proc_exists = True
+                else:
+                    post_process_only = True
+
+            if os.path.isfile(proc_file_ds):
+                print(f"Scene {proc_file_ds} already exists, skipping.")
+                el["local_path_ds"] = proc_file_ds
+                proc_ds_exists = True
+
+        if not proc_exists:
+            for band in bands:
+                if band not in el:
+                    raise ValueError(f"Band {band} not found in the scene data.")
+                band_url = el[band + "_alternate"]
+
+                band_output = os.path.join(originals_dir, os.path.basename(band_url))
+                if os.path.isfile(band_output):
+                    print(f"Original band files already exist, skipping.")
+                else:
+                    band_img, band_meta = stream_scene_from_aws(band_url, aws_session)
+                    with rasterio.open(band_output, "w", **band_meta["profile"]) as ds:
+                        for i in range(band_meta["profile"]["count"]):
+                            ds.write(band_img[i, :, :], i + 1)
 
         if download_only:
             print("Download only mode is enabled, skipping processing.")
             continue
 
-        files = glob.glob(f"{originals_dir}/**")
-        b0_band = list(
-            filter(
-                lambda f: f.endswith(
-                    f"{bands_suffixes[composite_band_indexes[0]]}{ext}"
-                ),
-                files,
+        if not proc_exists or post_process_only:
+            files = glob.glob(f"{originals_dir}/**")
+            b0_band = list(
+                filter(
+                    lambda f: f.endswith(
+                        f"{bands_suffixes[composite_band_indexes[0]]}{ext}"
+                    ),
+                    files,
+                )
+            )[0]
+            b1_band = list(
+                filter(
+                    lambda f: f.endswith(
+                        f"{bands_suffixes[composite_band_indexes[1]]}{ext}"
+                    ),
+                    files,
+                )
+            )[0]
+            b2_band = list(
+                filter(
+                    lambda f: f.endswith(
+                        f"{bands_suffixes[composite_band_indexes[2]]}{ext}"
+                    ),
+                    files,
+                )
+            )[0]
+            proc_bands = [b0_band, b1_band, b2_band]
+            make_composite_scene(
+                proc_bands,
+                proc_file,
+                gamma,
+                equalise_histogram,
+                stretch_contrast,
+                gray_scale,
+                averaging,
+                edge_detection,
+                edge_detection_mode,
+                post_process_only,
+                reference_band_number,
             )
-        )[0]
-        b1_band = list(
-            filter(
-                lambda f: f.endswith(
-                    f"{bands_suffixes[composite_band_indexes[1]]}{ext}"
-                ),
-                files,
-            )
-        )[0]
-        b2_band = list(
-            filter(
-                lambda f: f.endswith(
-                    f"{bands_suffixes[composite_band_indexes[2]]}{ext}"
-                ),
-                files,
-            )
-        )[0]
-        proc_bands = [b0_band, b1_band, b2_band]
-        proc_file_ds = os.path.join(process_ds_dir, os.path.basename(proc_file))
-        make_composite_scene(
-            proc_bands,
-            proc_file,
-            gamma,
-            equalise_histogram,
-            stretch_contrast,
-            gray_scale,
-            averaging,
-            edge_detection,
-            edge_detection_mode,
-            post_process_only,
-            reference_band_number,
-        )
-        downsample_dataset(proc_file, scale_factor, proc_file_ds)
+        if not proc_ds_exists:
+            downsample_dataset(proc_file, scale_factor, proc_file_ds)
 
         el["local_path"] = proc_file
         el["local_path_ds"] = proc_file_ds
