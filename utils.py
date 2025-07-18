@@ -4008,7 +4008,7 @@ def download_and_process_series(
 
                 band_output = os.path.join(originals_dir, os.path.basename(band_url))
                 if os.path.isfile(band_output):
-                    print(f"Original band files already exist, skipping.")
+                    print(f"Original file for {band} band already exists, skipping.")
                 else:
                     band_img, band_meta = stream_scene_from_aws(band_url, aws_session)
                     with rasterio.open(band_output, "w", **band_meta["profile"]) as ds:
