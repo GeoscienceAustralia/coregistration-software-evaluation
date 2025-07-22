@@ -2594,7 +2594,7 @@ def get_search_query(
     start_date: str = "2014-10-30T00:00:00",
     end_date: str = "2015-01-23T23:59:59",
     cloud_cover: int | None = 80,
-    is_landsat: bool = True,
+    pystac_query: bool = False,
     extra_query: dict | None = None,
 ) -> dict:
     """Generates a search query for the STAC server based on the provided parameters.
@@ -2615,8 +2615,8 @@ def get_search_query(
         End date for the search, by default "2015-01-23T23:59:59"
     cloud_cover : int | None, optional
         Cloud cover percentage to filter by, by default 80
-    is_landsat : bool, optional
-        Is the query for Landsat data, by default True
+    pystac_query : bool, optional
+        If True, returns a query suitable for pystac, by default False
     extra_query : dict | None, optional
         Additional query parameters to include in the search, by default None
 
@@ -2633,7 +2633,9 @@ def get_search_query(
         "page": 1,
         "limit": 100,
     }
-    if not is_landsat:
+    if pystac_query:
+        del query["limit"]
+        del query["page"]
         platform = None
         collection_category = None
         cloud_cover = None
