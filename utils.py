@@ -879,6 +879,8 @@ def make_mosaic(
     resolution_adjustment: bool = False,
     resampling_resolution: str = "lower",
     mosaic_output_path: str = "",
+    return_profile_only: bool = False,
+    cv_flags: int = cv.INTER_NEAREST,
 ) -> tuple:
     """
     Creates a mosaic of overlapping scenes. Offsets will be added to the size of the final mosaic if specified.
@@ -902,6 +904,11 @@ def make_mosaic(
         Can be either "lower" or "higher", by default "lower".
     mosaic_output_path : str, optional
         If provided, the mosaic will be saved to this path. If not provided, the mosaic will not be saved.
+    return_profile_only : bool, optional
+        If True, returns only the real world profiles of the mosaic instead of the new transforms in pixels.
+        Defaults to False.
+    cv_flags : int, optional
+        OpenCV flags for the warping process. Defaults to `cv.INTER_NEAREST`.
 
     Returns
     -------
@@ -909,7 +916,7 @@ def make_mosaic(
         A tuple containing:
         - The mosaiced image as a numpy array.
         - A list of warped images if `return_warps` is True, otherwise an empty list.
-        - A list of new transforms for each dataset.
+        - A list of new transforms for each dataset or the real world profiles if `return_profile_only` is True.
     """
 
     if resolution_adjustment:
@@ -931,6 +938,7 @@ def make_mosaic(
     crss = []
     transforms = []
     boundss = []
+    original_boundss = []
     for p in dataset_paths:
         raster = rasterio.open(p)
         transform = raster.transform
@@ -941,6 +949,7 @@ def make_mosaic(
         crs = raster.crs.data
         crss.append(crs)
         boundss.append(utm_bounds(raster.bounds, crs))
+        original_boundss.append(raster.bounds)
 
     selected_res_x = max(ps_x) if resampling_resolution == "lower" else min(ps_x)
     selected_res_y = max(ps_y) if resampling_resolution == "lower" else min(ps_y)
@@ -956,16 +965,23 @@ def make_mosaic(
     rights = []
     tops = []
     bottoms = []
+    original_tops = []
+    original_lefts = []
     for i, bounds in enumerate(boundss):
         lefts.append(bounds.left)
         rights.append(bounds.right)
         tops.append(bounds.top)
         bottoms.append(bounds.bottom)
+        original_tops.append(original_boundss[i].top)
+        original_lefts.append(original_boundss[i].left)
 
     min_left = min(lefts)
     min_bottom = min(bottoms)
     max_right = max(rights)
     max_top = max(tops)
+
+    max_original_top = max(original_tops)
+    min_original_left = min(original_lefts)
 
     new_shape = (
         int((max_top - min_bottom) / selected_res_y) + offset_y,
@@ -998,7 +1014,10 @@ def make_mosaic(
     for i, rs in enumerate(rasters):
         img = flip_img(rs.read())
         imgw = cv.warpAffine(
-            img, new_transforms[i], (new_shape[1], new_shape[0]), flags=cv.INTER_LINEAR
+            img,
+            new_transforms[i],
+            (new_shape[1], new_shape[0]),
+            flags=cv_flags,
         )
 
         if len(imgw.shape) == 2:
@@ -1019,20 +1038,33 @@ def make_mosaic(
     if resolution_adjustment:
         shutil.rmtree("temp/res_adjustment", ignore_errors=True)
 
+    mosaic_profile = rasterio.open(dataset_paths[0]).profile
+    mosaic_profile["height"] = new_shape[0]
+    mosaic_profile["width"] = new_shape[1]
+    mosaic_profile["count"] = 3
+    mosaic_profile["transform"] = rasterio.Affine(
+        selected_res_x, 0.0, min_left, 0.0, -selected_res_y, max_top
+    )
+    original_mosaic_profile = mosaic_profile.copy()
+    original_mosaic_profile["transform"] = rasterio.Affine(
+        selected_res_x, 0.0, min_original_left, 0.0, -selected_res_y, max_original_top
+    )
+
     if mosaic_output_path != "":
         print("Writing mosaic file.")
-        mosaic_profile = rasterio.open(dataset_paths[0]).profile
-        mosaic_profile["height"] = new_shape[0]
-        mosaic_profile["width"] = new_shape[1]
-        mosaic_profile["count"] = 3
-        mosaic_profile["transform"] = rasterio.Affine(
-            selected_res_x, 0.0, min_left, 0.0, -selected_res_y, max_top
-        )
         with rasterio.open(mosaic_output_path, "w", **mosaic_profile) as ds:
             for i in range(0, 3):
                 ds.write(mosaic[:, :, i], i + 1)
 
-    return mosaic, warps, new_transforms
+    return (
+        mosaic,
+        warps,
+        (
+            (mosaic_profile, original_mosaic_profile)
+            if return_profile_only
+            else new_transforms
+        ),
+    )
 
 
 def simple_mosaic(img_list):
