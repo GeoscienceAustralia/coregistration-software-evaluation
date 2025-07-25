@@ -45,6 +45,7 @@ import PIL
 import rioxarray as rxr
 import xarray as xr
 import pystac
+from typing import Callable
 
 try:
     from arosics import COREG_LOCAL
@@ -2709,6 +2710,7 @@ def make_composite_scene(
     edge_detection_mode: Literal["sobel", "laplacian", "canny"] = "canny",
     post_process_only: bool = False,
     reference_band_number: Literal[1, 2, 3] | None = None,
+    preserve_depth: bool = False,
 ) -> np.ndarray:
     """Makes a composite image from the given dataset paths.
 
@@ -2737,6 +2739,8 @@ def make_composite_scene(
         Only post-process the image if set to True, by default False.
     reference_band_number : Literal[1, 2, 3] | None, optional
         Reference band number for the reprojecting and resampling the images to the reference image, by default None
+    preserve_depth : bool, optional
+        Preserve the depth of the image, by default False.
 
     Returns
     -------
@@ -2780,7 +2784,7 @@ def make_composite_scene(
             else:
                 bs = rasterio.open(b).read(1)
 
-            if bs.dtype == "uint16":
+            if not preserve_depth and bs.dtype == "uint16":
                 bs = np.clip(bs / 256, 0, 255).astype("uint8")
 
             band_imgs.append(bs)
@@ -3921,6 +3925,8 @@ def download_and_process_series(
     download_only: bool = False,
     composite_band_indexes: list[int] = [0, 1, 2],
     scale_factor: float = 0.2,
+    scene_name_map: Callable | None = None,
+    presserve_depth: bool = False,
 ) -> list:
     """Downloads and processes a series of scenes from AWS S3, creating composite images from the specified bands.
 
@@ -3966,6 +3972,11 @@ def download_and_process_series(
         List of indexes for the bands to be used in the composite image, by default [0, 1, 2]
     scale_factor : float, optional
         Scale factor for downsampling the processed scenes, by default 0.2
+    scene_name_map : Callable | None, optional
+        Function to map scene names to a specific format, by default None
+    presserve_depth : bool, optional
+        Preserve the depth of the original images, by default False
+
     Returns
     -------
     list
@@ -4008,7 +4019,10 @@ def download_and_process_series(
             f"Now downloading and processing scenes for {el['scene_name']}{path_row_str}, scene {j + 1} of {len(data)}.",
         )
         originals_dir = f"{output_dir}/Originals/{el['scene_name']}"
-        os.makedirs(originals_dir, exist_ok=True)
+        if scene_name_map is not None:
+            el["scene_name"] = scene_name_map(el["scene_name"])
+        new_originals_dir = f"{output_dir}/Originals/{el['scene_name']}"
+        os.makedirs(new_originals_dir, exist_ok=True)
 
         post_process_only = False
         proc_exists = False
@@ -4040,7 +4054,9 @@ def download_and_process_series(
                     raise ValueError(f"Band {band} not found in the scene data.")
                 band_url = el[band + "_alternate"]
 
-                band_output = os.path.join(originals_dir, os.path.basename(band_url))
+                band_output = os.path.join(
+                    new_originals_dir, os.path.basename(band_url)
+                )
                 if os.path.isfile(band_output):
                     print(f"Original file for {band} band already exists, skipping.")
                 else:
@@ -4054,7 +4070,7 @@ def download_and_process_series(
             continue
 
         if not proc_exists or post_process_only:
-            files = glob.glob(f"{originals_dir}/**")
+            files = glob.glob(f"{new_originals_dir}/**")
             b0_band = list(
                 filter(
                     lambda f: f.endswith(
@@ -4092,6 +4108,7 @@ def download_and_process_series(
                 edge_detection_mode,
                 post_process_only,
                 reference_band_number,
+                presserve_depth,
             )
         if not proc_ds_exists:
             downsample_dataset(proc_file, scale_factor, proc_file_ds)
