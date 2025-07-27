@@ -882,6 +882,7 @@ def make_mosaic(
     mosaic_output_path: str = "",
     return_profile_only: bool = False,
     cv_flags: int = cv.INTER_NEAREST,
+    output_type: str = "uint8",
 ) -> tuple:
     """
     Creates a mosaic of overlapping scenes. Offsets will be added to the size of the final mosaic if specified.
@@ -910,6 +911,8 @@ def make_mosaic(
         Defaults to False.
     cv_flags : int, optional
         OpenCV flags for the warping process. Defaults to `cv.INTER_NEAREST`.
+    output_type : str, optional
+        The data type of the output mosaic. Defaults to "uint8". Other options could be "uint16", "float32", etc.
 
     Returns
     -------
@@ -1010,7 +1013,7 @@ def make_mosaic(
             )
         )
 
-    mosaic = np.zeros((*new_shape, 3)).astype("uint8")
+    mosaic = np.zeros((*new_shape, 3)).astype(output_type)
     warps = []
     for i, rs in enumerate(rasters):
         img = flip_img(rs.read())
@@ -1029,7 +1032,7 @@ def make_mosaic(
             idx = np.where(cv.cvtColor(imgw, cv.COLOR_BGR2GRAY) != 0)
             mosaic[idx[0], idx[1], :] = imgw[idx[0], idx[1], :]
         if return_warps:
-            warp = np.zeros_like(imgw).astype("uint8")
+            warp = np.zeros_like(imgw).astype(output_type)
             if len(imgw.shape) == 2:
                 warp[idx[0], idx[1]] = imgw[idx[0], idx[1]]
             else:
@@ -2369,7 +2372,11 @@ def co_register(
 
 
 def apply_gamma(
-    data, gamma=0.5, stretch_hist: bool = False, adjust_hist: bool = False
+    data,
+    gamma=0.5,
+    stretch_hist: bool = False,
+    adjust_hist: bool = False,
+    min_max: bool = True,
 ) -> np.ndarray:
     """Applies image enhancement using gamma correction and optional histogram adjustments.
 
@@ -2383,6 +2390,8 @@ def apply_gamma(
         Histogram stretching flag, by default False
     adjust_hist : bool, optional
         Equalize histogram flag, by default False
+    min_max : bool, optional
+        Min-max scaling flag, by default True
 
     Returns
     -------
@@ -2395,7 +2404,7 @@ def apply_gamma(
     if stretch_hist:
         p2, p98 = np.percentile(data, (2, 98))
         data = rescale_intensity(data, in_range=(p2, p98), out_range="uint8")
-    else:
+    elif min_max:
         data *= 255 / data.max()
         data = data.astype("uint8")
     return data
@@ -2711,6 +2720,7 @@ def make_composite_scene(
     post_process_only: bool = False,
     reference_band_number: Literal[1, 2, 3] | None = None,
     preserve_depth: bool = False,
+    min_max_scaling: bool = True,
 ) -> np.ndarray:
     """Makes a composite image from the given dataset paths.
 
@@ -2741,6 +2751,8 @@ def make_composite_scene(
         Reference band number for the reprojecting and resampling the images to the reference image, by default None
     preserve_depth : bool, optional
         Preserve the depth of the image, by default False.
+    min_max_scaling : bool, optional
+        Apply min-max scaling to the image, by default True.
 
     Returns
     -------
@@ -2767,7 +2779,6 @@ def make_composite_scene(
 
         if not gray_scale:
             profile["count"] = 3
-        profile["dtype"] = "uint8"
 
         band_imgs = []
         for b in all_bands:
@@ -2786,6 +2797,7 @@ def make_composite_scene(
 
             if not preserve_depth and bs.dtype == "uint16":
                 bs = np.clip(bs / 256, 0, 255).astype("uint8")
+                profile["dtype"] = "uint8"
 
             band_imgs.append(bs)
 
@@ -2793,11 +2805,13 @@ def make_composite_scene(
 
     if gray_scale:
         if averaging:
-            img = np.mean(img, axis=2).astype("uint8")
+            img = np.mean(img, axis=2)
+            if not preserve_depth and bs.dtype == "uint16":
+                img = img.astype("uint8")
         else:
             img = cv.cvtColor(img, cv.COLOR_BGR2GRAY)
 
-    img = apply_gamma(img, gamma, stretch_contrast, equalise_histogram)
+    img = apply_gamma(img, gamma, stretch_contrast, equalise_histogram, min_max_scaling)
     if edge_detection:
         img = edge_detector(img, edge_detection_mode, morphology_kernels=None)
 
@@ -3926,7 +3940,8 @@ def download_and_process_series(
     composite_band_indexes: list[int] = [0, 1, 2],
     scale_factor: float = 0.2,
     scene_name_map: Callable | None = None,
-    presserve_depth: bool = False,
+    preserve_depth: bool = False,
+    min_max_scaling: bool = True,
 ) -> list:
     """Downloads and processes a series of scenes from AWS S3, creating composite images from the specified bands.
 
@@ -3974,8 +3989,10 @@ def download_and_process_series(
         Scale factor for downsampling the processed scenes, by default 0.2
     scene_name_map : Callable | None, optional
         Function to map scene names to a specific format, by default None
-    presserve_depth : bool, optional
+    preserve_depth : bool, optional
         Preserve the depth of the original images, by default False
+    min_max_scaling : bool, optional
+        Use min-max scaling for the images, by default True
 
     Returns
     -------
@@ -4108,7 +4125,8 @@ def download_and_process_series(
                 edge_detection_mode,
                 post_process_only,
                 reference_band_number,
-                presserve_depth,
+                preserve_depth,
+                min_max_scaling,
             )
         if not proc_ds_exists:
             downsample_dataset(proc_file, scale_factor, proc_file_ds)
