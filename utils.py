@@ -4519,3 +4519,58 @@ def write_bounds_to_kml(bounds, filename, poly_names: list | None = None):
                 f"<Placemark><name>{name}</name><Polygon><outerBoundaryIs><LinearRing><coordinates>{b[0]},{b[1]} {b[2]},{b[1]} {b[2]},{b[3]} {b[0]},{b[3]} {b[0]},{b[1]}</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark>\n"
             )
         f.write("</Document>\n</kml>")
+
+
+def create_dataset_from_files(
+    files: list[str],
+    times: list[datetime] | list[str] | None = None,
+    crs: int | None = None,
+    bands: list[str] | None = None,
+    remove_val: float | int | None = 0,
+) -> xr.Dataset:
+    """Create an xarray dataset from the list of files and times.
+
+    Parameters
+    ----------
+    files : list[str]
+        List of file paths to the raster files.
+    times : list[datetime] | list[str] | None, optional
+        List of times corresponding to the files. If None, uses indices as strings.
+    crs : int | None, optional
+        Coordinate reference system to assign to the dataset, by default None.
+    bands : list[str] | None, optional
+        List of band names to rename the dataset variables. If None, uses default band names.
+    remove_val : float | int | None, optional
+        Value to remove from the dataset. If None, no values are removed. Default is 0.
+
+    Returns
+    -------
+    xr.Dataset
+        The created xarray dataset.
+    """
+
+    if times is None:
+        times = [str(i) for i in range(len(files))]
+
+    dsl = [
+        rxr.open_rasterio(f, band_as_variable=True, chunks={})
+        .astype("float32")
+        .assign_coords(time=t)
+        .expand_dims("time", axis=2)
+        for (f, t) in zip(files, times)
+    ]
+    print(len(dsl), "datasets found in the target directory.")
+    ds = xr.concat(dsl, dim="time").transpose("time", "y", "x").drop_attrs()
+    if crs is not None:
+        ds["spatial_ref"] = crs
+
+    if bands is not None:
+        ds = ds.rename_vars({f"band_{i+1}": b for i, b in enumerate(bands)})
+        ds = ds[["y", "x", "spatial_ref", "time"] + bands]
+    else:
+        ds = ds[["y", "x", "spatial_ref", "time"]]
+
+    if remove_val is not None:
+        print(f"Removing values equal to {remove_val} from the dataset.")
+        ds = ds.where(ds > remove_val)
+    return ds
