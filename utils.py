@@ -46,6 +46,7 @@ import rioxarray as rxr
 import xarray as xr
 import pystac
 from typing import Callable
+import warnings
 
 try:
     from arosics import COREG_LOCAL
@@ -2779,18 +2780,17 @@ def make_composite_scene(
         profile = rasterio.open(dataset_paths).profile
         img = flip_img(rasterio.open(dataset_paths).read())
     else:
-        all_bands = [dataset_paths[0], dataset_paths[1], dataset_paths[2]]
 
         if reference_band_number is not None:
-            profile = rasterio.open(all_bands[reference_band_number - 1]).profile
+            profile = rasterio.open(dataset_paths[reference_band_number - 1]).profile
         else:
-            profile = rasterio.open(all_bands[0]).profile
+            profile = rasterio.open(dataset_paths[0]).profile
 
         if not gray_scale:
-            profile["count"] = 3
+            profile["count"] = len(dataset_paths)
 
         band_imgs = []
-        for b in all_bands:
+        for b in dataset_paths:
             bp = rasterio.open(b).profile
             if bp["width"] != profile["width"] or bp["height"] != profile["height"]:
                 print(
@@ -2818,6 +2818,10 @@ def make_composite_scene(
             if not preserve_depth and bs.dtype == "uint16":
                 img = img.astype("uint8")
         else:
+            if len(dataset_paths) != 3:
+                raise ValueError(
+                    "For gray scale images, the number of bands should be 3."
+                )
             img = cv.cvtColor(img, cv.COLOR_BGR2GRAY)
 
     img = apply_gamma(img, gamma, stretch_contrast, equalise_histogram, min_max_scaling)
@@ -2831,9 +2835,8 @@ def make_composite_scene(
             elif img.ndim == 3 and img.shape[2] == 1:
                 ds.write(img[:, :, 0], 1)
             else:
-                ds.write(img[:, :, 0], 1)
-                ds.write(img[:, :, 1], 2)
-                ds.write(img[:, :, 2], 3)
+                for i in range(profile["count"]):
+                    ds.write(img[:, :, i], i + 1)
 
     return img
 
@@ -3946,11 +3949,12 @@ def download_and_process_series(
     reference_band_number: int | None = None,
     filename_suffix: str = "PROC",
     download_only: bool = False,
-    composite_band_indexes: list[int] = [0, 1, 2],
+    composite_band_indexes: list[int] | None = None,
     scale_factor: float = 0.2,
     scene_name_map: Callable | None = None,
     preserve_depth: bool = False,
     min_max_scaling: bool = True,
+    extra_bands: list[str] | None = None,
 ) -> list:
     """Downloads and processes a series of scenes from AWS S3, creating composite images from the specified bands.
 
@@ -3992,8 +3996,8 @@ def download_and_process_series(
         Suffix to be added to the processed files, by default "PROC"
     download_only : bool, optional
         If True, only downloads the scenes without processing them, by default False
-    composite_band_indexes : list[int], optional
-        List of indexes for the bands to be used in the composite image, by default [0, 1, 2]
+    composite_band_indexes : list[int] | None, optional
+        List of indexes for the bands to be used in the composite image, by default None
     scale_factor : float, optional
         Scale factor for downsampling the processed scenes, by default 0.2
     scene_name_map : Callable | None, optional
@@ -4002,6 +4006,8 @@ def download_and_process_series(
         Preserve the depth of the original images, by default False
     min_max_scaling : bool, optional
         Use min-max scaling for the images, by default True
+    extra_bands : list[str] | None, optional
+        Additional bands to be downloaded, by default None
 
     Returns
     -------
@@ -4010,13 +4016,15 @@ def download_and_process_series(
     Raises
     ------
     ValueError
-        If the composite band indexes are not a list of 3 indexes.
-    ValueError
         If a band is not found in the scene data.
     """
-    if len(composite_band_indexes) != 3:
-        raise ValueError(
-            "Composite band indexes should be a list of 3 indexes, e.g. [0, 1, 2] for RGB."
+    if composite_band_indexes is None:
+        composite_band_indexes = list(range(len(bands)))
+
+    if len(bands) != 3:
+        warnings.warn(
+            f"Number of bands is different from 3 , The composite image will be created using {len(bands)}.",
+            UserWarning,
         )
 
     os.makedirs(output_dir, exist_ok=True)
@@ -4075,7 +4083,10 @@ def download_and_process_series(
                 proc_ds_exists = True
 
         if not proc_exists:
-            for band in bands:
+            to_download = bands.copy()
+            if extra_bands is not None:
+                to_download.extend(extra_bands)
+            for band in to_download:
                 if band not in el:
                     raise ValueError(f"Band {band} not found in the scene data.")
                 band_url = el[band + "_alternate"]
@@ -4097,31 +4108,17 @@ def download_and_process_series(
 
         if not proc_exists or post_process_only:
             files = glob.glob(f"{new_originals_dir}/**")
-            b0_band = list(
-                filter(
-                    lambda f: f.endswith(
-                        f"{bands_suffixes[composite_band_indexes[0]]}{ext}"
-                    ),
-                    files,
-                )
-            )[0]
-            b1_band = list(
-                filter(
-                    lambda f: f.endswith(
-                        f"{bands_suffixes[composite_band_indexes[1]]}{ext}"
-                    ),
-                    files,
-                )
-            )[0]
-            b2_band = list(
-                filter(
-                    lambda f: f.endswith(
-                        f"{bands_suffixes[composite_band_indexes[2]]}{ext}"
-                    ),
-                    files,
-                )
-            )[0]
-            proc_bands = [b0_band, b1_band, b2_band]
+            proc_bands = []
+            for bi in range(len(bands)):
+                proc_band = list(
+                    filter(
+                        lambda f: f.endswith(
+                            f"{bands_suffixes[composite_band_indexes[bi]]}{ext}"
+                        ),
+                        files,
+                    )
+                )[0]
+                proc_bands.append(proc_band)
             make_composite_scene(
                 proc_bands,
                 proc_file,
