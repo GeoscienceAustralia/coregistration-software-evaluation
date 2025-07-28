@@ -2520,6 +2520,10 @@ def find_scenes_dict(
             feature = feature.to_dict()
 
         id = feature["id"]
+        use_title = False
+        if "title" in feature["properties"]:
+            id = feature["properties"]["title"]
+            use_title = True
 
         if "landsat:scene_id" in feature["properties"]:
             scene_id = feature["properties"]["landsat:scene_id"]
@@ -2552,9 +2556,14 @@ def find_scenes_dict(
     else:
         if type(features[0]) == dict:
             path_rows = ["_".join(k.split("_")[3:6]) for k in scene_dict]
+            time_ind = 2
         else:
-            path_rows = ["_".join(k.split("_")[1:3])[0:5] for k in scene_dict]
-        time_ind = 2
+            if use_title:
+                path_rows = ["_".join(k.split("_")[3:5])[0:15] for k in scene_dict]
+                time_ind = 5
+            else:
+                path_rows = ["_".join(k.split("_")[1:3])[0:5] for k in scene_dict]
+                time_ind = 2
     scene_dict_pr = {}
     for pr in path_rows:
         temp_dict = {}
