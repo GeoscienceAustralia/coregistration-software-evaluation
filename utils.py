@@ -4566,15 +4566,15 @@ def create_dataset_from_files(
         for (f, t) in zip(files, times)
     ]
     print(len(dsl), "datasets found in the target directory.")
-    ds = xr.concat(dsl, dim="time").transpose("time", "y", "x").drop_attrs()
+    ds = xr.concat(dsl, dim="time").drop_attrs()
     if crs is not None:
-        ds["spatial_ref"] = crs
+        ds["spatial_ref"] = np.int32(crs)
 
     if bands is not None:
         ds = ds.rename_vars({f"band_{i+1}": b for i, b in enumerate(bands)})
-        ds = ds[["y", "x", "spatial_ref", "time"] + bands]
+        ds = ds[["y", "x", "spatial_ref", "time"] + bands].transpose("time", "y", "x")
     else:
-        ds = ds[["y", "x", "spatial_ref", "time"]]
+        ds = ds[["y", "x", "spatial_ref", "time"]].transpose("time", "y", "x")
 
     if remove_val is not None:
         print(f"Removing values equal to {remove_val} from the dataset.")
