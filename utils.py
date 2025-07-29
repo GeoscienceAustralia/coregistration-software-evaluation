@@ -2561,7 +2561,7 @@ def find_scenes_dict(
         else:
             if use_title:
                 path_rows = ["_".join(k.split("_")[3:5])[0:15] for k in scene_dict]
-                time_ind = 5
+                time_ind = 4
             else:
                 path_rows = ["_".join(k.split("_")[1:3])[0:5] for k in scene_dict]
                 time_ind = 2
