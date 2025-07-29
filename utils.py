@@ -2812,14 +2812,14 @@ def make_composite_scene(
             else:
                 bs = rasterio.open(b).read(1)
 
-            if not preserve_depth:
-                bs = np.clip(bs / 256, 0, 255).astype("uint8")
-                profile["dtype"] = "uint8"
-
             band_imgs.append(bs)
 
         if remove_nans:
             band_imgs = [np.nan_to_num(b, nan=0) for b in band_imgs]
+
+        if not preserve_depth:
+            band_imgs = [np.clip(b / 256, 0, 255).astype("uint8") for b in band_imgs]
+            profile["dtype"] = "uint8"
 
         if three_channel:
             profile["count"] = 3
@@ -4186,7 +4186,10 @@ def download_and_process_series(
                 )[0]
                 proc_bands.append(proc_band)
 
-            to_process = proc_file if post_process_only else proc_bands
+            if post_process_only:
+                to_process = proc_file
+            else:
+                to_process = proc_bands
 
             make_composite_scene(
                 to_process,
