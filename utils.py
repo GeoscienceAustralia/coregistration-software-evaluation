@@ -2378,6 +2378,7 @@ def apply_gamma(
     stretch_hist: bool = False,
     adjust_hist: bool = False,
     min_max: bool = True,
+    output_type: str = "uint8",
 ) -> np.ndarray:
     """Applies image enhancement using gamma correction and optional histogram adjustments.
 
@@ -2393,6 +2394,8 @@ def apply_gamma(
         Equalize histogram flag, by default False
     min_max : bool, optional
         Min-max scaling flag, by default True
+    output_type : str, optional
+        Output data type, by default "uint8"
 
     Returns
     -------
@@ -2407,8 +2410,7 @@ def apply_gamma(
         data = rescale_intensity(data, in_range=(p2, p98), out_range="uint8")
     elif min_max:
         data *= 255 / data.max()
-        data = data.astype("uint8")
-    return data
+    return data.astype(output_type)
 
 
 def query_stac_server(
@@ -2731,6 +2733,8 @@ def make_composite_scene(
     reference_band_number: Literal[1, 2, 3] | None = None,
     preserve_depth: bool = False,
     min_max_scaling: bool = True,
+    three_channel: bool = False,
+    remove_nans: bool = False,
 ) -> np.ndarray:
     """Makes a composite image from the given dataset paths.
 
@@ -2763,6 +2767,10 @@ def make_composite_scene(
         Preserve the depth of the image, by default False.
     min_max_scaling : bool, optional
         Apply min-max scaling to the image, by default True.
+    three_channel : bool, optional
+        If True, the output image will be a 3-channel image, by default False.
+    remove_nans : bool, optional
+        If True, NaN values in the image will be removed, by default False.
 
     Returns
     -------
@@ -2804,18 +2812,39 @@ def make_composite_scene(
             else:
                 bs = rasterio.open(b).read(1)
 
-            if not preserve_depth and bs.dtype == "uint16":
+            if not preserve_depth:
                 bs = np.clip(bs / 256, 0, 255).astype("uint8")
                 profile["dtype"] = "uint8"
 
             band_imgs.append(bs)
+
+        if remove_nans:
+            band_imgs = [np.nan_to_num(b, nan=0) for b in band_imgs]
+
+        if three_channel:
+            profile["count"] = 3
+            if len(band_imgs) == 1:
+                band_imgs = [band_imgs[0]] * 3
+                print(
+                    "Only one band provided, duplicating it to create a 3-channel image."
+                )
+            elif len(band_imgs) == 2:
+                band_imgs = [band_imgs[0], band_imgs[1], band_imgs[0]]
+                print(
+                    "Two bands provided, duplicating the first band to create a 3-channel image."
+                )
+            elif len(band_imgs) > 3:
+                band_imgs = band_imgs[:3]
+                print(
+                    "More than three bands provided, using only the first three bands to create a 3-channel image."
+                )
 
         img = cv.merge(band_imgs)
 
     if gray_scale:
         if averaging:
             img = np.mean(img, axis=2)
-            if not preserve_depth and bs.dtype == "uint16":
+            if not preserve_depth:
                 img = img.astype("uint8")
         else:
             if len(dataset_paths) != 3:
@@ -2824,7 +2853,13 @@ def make_composite_scene(
                 )
             img = cv.cvtColor(img, cv.COLOR_BGR2GRAY)
 
-    img = apply_gamma(img, gamma, stretch_contrast, equalise_histogram, min_max_scaling)
+    if preserve_depth:
+        output_type = img.dtype
+    else:
+        output_type = "uint8"
+    img = apply_gamma(
+        img, gamma, stretch_contrast, equalise_histogram, min_max_scaling, output_type
+    )
     if edge_detection:
         img = edge_detector(img, edge_detection_mode, morphology_kernels=None)
 
@@ -3955,6 +3990,8 @@ def download_and_process_series(
     preserve_depth: bool = False,
     min_max_scaling: bool = True,
     extra_bands: list[str] | None = None,
+    three_channel: bool = False,
+    remove_nans: bool = False,
 ) -> list:
     """Downloads and processes a series of scenes from AWS S3, creating composite images from the specified bands.
 
@@ -4008,6 +4045,10 @@ def download_and_process_series(
         Use min-max scaling for the images, by default True
     extra_bands : list[str] | None, optional
         Additional bands to be downloaded, by default None
+    three_channel : bool, optional
+        If True, the composite image will have three channels, by default False
+    remove_nans : bool, optional
+        If True, removes NaN values from the processed images, by default False
 
     Returns
     -------
@@ -4133,6 +4174,8 @@ def download_and_process_series(
                 reference_band_number,
                 preserve_depth,
                 min_max_scaling,
+                three_channel,
+                remove_nans,
             )
         if not proc_ds_exists:
             downsample_dataset(proc_file, scale_factor, proc_file_ds)
