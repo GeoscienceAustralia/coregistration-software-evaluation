@@ -4602,7 +4602,9 @@ def create_dataset_from_files(
         times = [str(i) for i in range(len(files))]
 
     dsl = [
-        rxr.open_rasterio(f, band_as_variable=True, chunks={})
+        rxr.open_rasterio(f, band_as_variable=True, chunks={})[
+            [f"band_{i+1}" for i in range(len(bands))]
+        ]
         .astype("float32")
         .assign_coords(time=t)
         .expand_dims("time", axis=2)
