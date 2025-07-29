@@ -3883,6 +3883,10 @@ def process_existing_outputs(
     averaging: bool = False,
     subdir: str = "true_color",
     force_reprocess: bool = False,
+    preserve_depth: bool = False,
+    min_max_scaling: bool = True,
+    three_channel: bool = False,
+    remove_nans: bool = False,
 ):
     """Processes existing files into composite scenes and saves them to the specified output directory.
 
@@ -3910,6 +3914,14 @@ def process_existing_outputs(
         Subdirectory name for processed images, by default "true_color"
     force_reprocess : bool, optional
         Force reprocessing of existing files, by default False
+    preserve_depth : bool, optional
+        Preserve the depth of the original images, by default False
+    min_max_scaling : bool, optional
+        Use min-max scaling for the images, by default True
+    three_channel : bool, optional
+        If True, the composite image will have three channels, by default False
+    remove_nans : bool, optional
+        If True, removes NaN values from the processed images, by default False
     """
     os.makedirs(output_dir, exist_ok=True)
 
@@ -3945,6 +3957,10 @@ def process_existing_outputs(
             edge_detection,
             edge_detection_mode,
             True,
+            preserve_depth,
+            min_max_scaling,
+            three_channel,
+            remove_nans,
         )
         downsample_dataset(proc_file, 0.2, proc_file_ds)
 
@@ -3992,6 +4008,7 @@ def download_and_process_series(
     extra_bands: list[str] | None = None,
     three_channel: bool = False,
     remove_nans: bool = False,
+    force_reprocess: bool = False,
 ) -> list:
     """Downloads and processes a series of scenes from AWS S3, creating composite images from the specified bands.
 
@@ -4049,6 +4066,8 @@ def download_and_process_series(
         If True, the composite image will have three channels, by default False
     remove_nans : bool, optional
         If True, removes NaN values from the processed images, by default False
+    force_reprocess : bool, optional
+        If True, forces reprocessing of existing files, by default False
 
     Returns
     -------
@@ -4107,16 +4126,22 @@ def download_and_process_series(
 
         if not download_only:
             if os.path.isfile(proc_file):
-                print(f"Scene {proc_file} already exists, skipping.")
                 el["local_path"] = proc_file
                 if (
                     (not edge_detection)
                     and (not equalise_histogram)
                     and (not stretch_contrast)
                 ):
+                    print(f"Scene {proc_file} already exists, skipping.")
                     proc_exists = True
-                else:
+                elif force_reprocess:
+                    print(
+                        f"Scene {proc_file} already exists, running post-processing only."
+                    )
                     post_process_only = True
+                else:
+                    print(f"Scene {proc_file} already exists, skipping.")
+                    proc_exists = True
 
             if os.path.isfile(proc_file_ds):
                 print(f"Scene {proc_file_ds} already exists, skipping.")
@@ -4147,7 +4172,7 @@ def download_and_process_series(
             print("Download only mode is enabled, skipping processing.")
             continue
 
-        if not proc_exists or post_process_only:
+        if not proc_exists:
             files = glob.glob(f"{new_originals_dir}/**")
             proc_bands = []
             for bi in range(len(bands)):
@@ -4160,8 +4185,11 @@ def download_and_process_series(
                     )
                 )[0]
                 proc_bands.append(proc_band)
+
+            to_process = proc_file if post_process_only else proc_bands
+
             make_composite_scene(
-                proc_bands,
+                to_process,
                 proc_file,
                 gamma,
                 equalise_histogram,
