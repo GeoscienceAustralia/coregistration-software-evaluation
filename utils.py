@@ -940,7 +940,6 @@ def make_mosaic(
     ps_x = []
     ps_y = []
     rasters = []
-    crss = []
     transforms = []
     boundss = []
     original_boundss = []
@@ -951,9 +950,12 @@ def make_mosaic(
         ps_y.append(abs(transform.e))
         rasters.append(raster)
         transforms.append(transform)
-        crs = raster.crs.data
-        crss.append(crs)
-        boundss.append(utm_bounds(raster.bounds, crs))
+        if raster.crs is None:
+            warnings.warn(f"Dataset {p} does not have a CRS.")
+            boundss.append(raster.bounds)
+        else:
+            crs = raster.crs.data
+            boundss.append(utm_bounds(raster.bounds, crs))
         original_boundss.append(raster.bounds)
 
     selected_res_x = max(ps_x) if resampling_resolution == "lower" else min(ps_x)
@@ -1054,6 +1056,7 @@ def make_mosaic(
     original_mosaic_profile["transform"] = rasterio.Affine(
         selected_res_x, 0.0, min_original_left, 0.0, -selected_res_y, max_original_top
     )
+    original_mosaic_profile["dtype"] = output_type
 
     if mosaic_output_path != "":
         print("Writing mosaic file.")
