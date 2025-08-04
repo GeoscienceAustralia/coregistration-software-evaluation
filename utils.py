@@ -884,6 +884,8 @@ def make_mosaic(
     return_profile_only: bool = False,
     cv_flags: int = cv.INTER_NEAREST,
     output_type: str = "uint8",
+    universal_masking: bool = False,
+    nodata: int | float | None = None,
 ) -> tuple:
     """
     Creates a mosaic of overlapping scenes. Offsets will be added to the size of the final mosaic if specified.
@@ -914,6 +916,12 @@ def make_mosaic(
         OpenCV flags for the warping process. Defaults to `cv.INTER_NEAREST`.
     output_type : str, optional
         The data type of the output mosaic. Defaults to "uint8". Other options could be "uint16", "float32", etc.
+    universal_masking : bool, optional
+        If True, applies a universal masking to the mosaic to ensure that all pixels are masked correctly
+        across all datasets. This is useful for datasets with different nodata values.
+        Defaults to False.
+    nodata : int | float | None, optional
+        The nodata value to be used for masking.
 
     Returns
     -------
@@ -1018,14 +1026,29 @@ def make_mosaic(
 
     mosaic = np.zeros((*new_shape, 3)).astype(output_type)
     warps = []
+    masks = []
     for i, rs in enumerate(rasters):
-        img = flip_img(rs.read())
+        if universal_masking:
+            data = flip_img(rs.read(masked=True))
+            mask = data.mask
+            img = data.data
+        else:
+            img = flip_img(rs.read())
         imgw = cv.warpAffine(
             img,
             new_transforms[i],
             (new_shape[1], new_shape[0]),
             flags=cv_flags,
         )
+        if universal_masking:
+            maskw = cv.warpAffine(
+                mask.astype(np.uint8),
+                new_transforms[i],
+                (new_shape[1], new_shape[0]),
+                flags=cv_flags,
+            )
+            maskw = np.where(maskw == 1, 1, 0).astype(bool)
+            masks.append(maskw)
 
         if len(imgw.shape) == 2:
             idx = np.where(imgw != 0)
@@ -1034,6 +1057,10 @@ def make_mosaic(
         else:
             idx = np.where(cv.cvtColor(imgw, cv.COLOR_BGR2GRAY) != 0)
             mosaic[idx[0], idx[1], :] = imgw[idx[0], idx[1], :]
+
+        if universal_masking:
+            mosaic[maskw] = 0
+
         if return_warps:
             warp = np.zeros_like(imgw).astype(output_type)
             if len(imgw.shape) == 2:
@@ -1041,6 +1068,13 @@ def make_mosaic(
             else:
                 warp[idx[0], idx[1], :] = imgw[idx[0], idx[1], :]
             warps.append(warp)
+
+    if universal_masking:
+        universal_mask = np.logical_or.reduce(masks)
+        # if len(universal_mask.shape) == 3:
+        #     universal_mask = np.all(universal_mask, axis=2)
+        for warp in warps:
+            warp[universal_mask] = 0
 
     if resolution_adjustment:
         shutil.rmtree("temp/res_adjustment", ignore_errors=True)
@@ -1063,6 +1097,10 @@ def make_mosaic(
         with rasterio.open(mosaic_output_path, "w", **mosaic_profile) as ds:
             for i in range(0, 3):
                 ds.write(mosaic[:, :, i], i + 1)
+
+    if nodata is not None:
+        mosaic_profile["nodata"] = nodata
+        original_mosaic_profile["nodata"] = nodata
 
     return (
         mosaic,
