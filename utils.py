@@ -47,6 +47,9 @@ import xarray as xr
 import pystac
 from typing import Callable
 import warnings
+from sklearn.cluster import DBSCAN
+
+dbscan = DBSCAN()
 
 try:
     from arosics import COREG_LOCAL
@@ -886,6 +889,7 @@ def make_mosaic(
     output_type: str = "uint8",
     universal_masking: bool = False,
     nodata: int | float | None = None,
+    cluster_masks: bool = False,
 ) -> tuple:
     """
     Creates a mosaic of overlapping scenes. Offsets will be added to the size of the final mosaic if specified.
@@ -922,6 +926,9 @@ def make_mosaic(
         Defaults to False.
     nodata : int | float | None, optional
         The nodata value to be used for masking.
+    cluster_masks : bool, optional
+        If True, clusters the masks of the datasets to create a universal mask.
+        Defaults to False.
 
     Returns
     -------
@@ -1070,11 +1077,49 @@ def make_mosaic(
             warps.append(warp)
 
     if universal_masking:
-        universal_mask = np.logical_or.reduce(masks)
-        # if len(universal_mask.shape) == 3:
-        #     universal_mask = np.all(universal_mask, axis=2)
-        for warp in warps:
-            warp[universal_mask] = 0
+        if cluster_masks:
+            mse_list = []
+            for i in range(len(masks)):
+                mses = []
+                for j in range(len(masks)):
+                    mse_val = mse(masks[i], masks[j])
+                    mses.append(mse_val)
+                mse_list.append(mses)
+            cls = dbscan.fit(np.array(mse_list))
+            labels = cls.labels_
+            unique_labels = np.unique(labels)
+            print(f"Number of clusters in masks: {len(unique_labels)}")
+            masks_dict = dict(
+                [(j, i) for i, j in zip(labels, range(len(masks)))]
+            )  # Create a dictionary of masks with their labels and indices
+            masks_per_cluster = []
+            for idx in range(
+                len(unique_labels) - 1
+            ):  # Range for the labels including -1 for noise
+                cluster_masks_idx = [
+                    i for i in (range(len(labels))) if labels[i] == idx
+                ]
+                cluster_masks = [masks[i] for i in cluster_masks_idx]
+                masks_per_cluster.append(np.logical_or.reduce(cluster_masks))
+
+            for i, warp in enumerate(warps):
+                if masks_dict[i] != -1:
+                    universal_mask = masks_per_cluster[masks_dict[i]]
+                    if np.all(universal_mask):
+                        warnings.warn(
+                            "WARNING: All pixels in the warps are masked. Warped outputs will be empty."
+                        )
+                    warp[universal_mask] = 0
+        else:
+            universal_mask = np.logical_or.reduce(masks)
+            if np.all(universal_mask):
+                warnings.warn(
+                    "WARNING: All pixels in the warps are masked. Warped outputs will be empty."
+                )
+            # if len(universal_mask.shape) == 3:
+            #     universal_mask = np.all(universal_mask, axis=2)
+            for warp in warps:
+                warp[universal_mask] = 0
 
     if resolution_adjustment:
         shutil.rmtree("temp/res_adjustment", ignore_errors=True)
