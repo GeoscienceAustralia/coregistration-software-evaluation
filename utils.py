@@ -890,6 +890,7 @@ def make_mosaic(
     universal_masking: bool = False,
     nodata: int | float | None = None,
     cluster_masks: bool = False,
+    force_crs: Literal["auto"] | None = "auto",
 ) -> tuple:
     """
     Creates a mosaic of overlapping scenes. Offsets will be added to the size of the final mosaic if specified.
@@ -929,6 +930,9 @@ def make_mosaic(
     cluster_masks : bool, optional
         If True, clusters the masks of the datasets to create a universal mask.
         Defaults to False.
+    force_crs : Literal["auto"] | None, optional
+        If "auto", the function will try to determine the CRS from the datasets.
+        If None, the CRS will not be forced. Defaults to "auto".
 
     Returns
     -------
@@ -958,6 +962,12 @@ def make_mosaic(
     transforms = []
     boundss = []
     original_boundss = []
+    crs_numbers = []
+    first_crs = rasterio.open(dataset_paths[0]).crs
+    if first_crs is None:
+        force_crs = None
+    else:
+        first_crs_data = first_crs.data
     for p in dataset_paths:
         raster = rasterio.open(p)
         transform = raster.transform
@@ -967,11 +977,36 @@ def make_mosaic(
         transforms.append(transform)
         if raster.crs is None:
             warnings.warn(f"Dataset {p} does not have a CRS.")
-            boundss.append(raster.bounds)
+            corrected_bounds = raster.bounds
+            boundss.append(corrected_bounds)
         else:
             crs = raster.crs.data
-            boundss.append(utm_bounds(raster.bounds, crs))
-        original_boundss.append(raster.bounds)
+            if force_crs == "auto":
+                corrected_bounds = utm_bounds(
+                    raster.bounds, crs, forced_zone=first_crs_data["zone"]
+                )
+                boundss.append(corrected_bounds)
+            elif force_crs is None:
+                corrected_bounds = utm_bounds(raster.bounds, crs)
+                boundss.append(corrected_bounds)
+            else:
+                raise ValueError(
+                    "force_crs should be either 'auto' or None. Please check the documentation."
+                )
+
+            crs_numbers.append(raster.crs.to_epsg())
+
+        original_boundss.append(corrected_bounds)
+
+    if np.any(np.diff(crs_numbers) != 0):
+        if force_crs is None:
+            warnings.warn(
+                "Datasets have different CRS. The mosaicing process might fail with discrepancies in CRS information."
+            )
+        else:
+            warnings.warn(
+                f"Datasets have different CRS. The first CRS: {first_crs}, will be used for the mosaicing process."
+            )
 
     selected_res_x = max(ps_x) if resampling_resolution == "lower" else min(ps_x)
     selected_res_y = max(ps_y) if resampling_resolution == "lower" else min(ps_y)
@@ -1540,7 +1575,12 @@ def LLAtoUTM(lla: Union[LLA, LLA3], crs: Union[dict, None]):
         return UTM(*output)
 
 
-def utm_bounds(bounds: BoundingBox, crs: dict, skip_stereo: bool = True) -> BoundingBox:
+def utm_bounds(
+    bounds: BoundingBox,
+    crs: dict,
+    skip_stereo: bool = True,
+    forced_zone: int | None = None,
+) -> BoundingBox:
     """Returns the bounding box in UTM coordinates if the CRS is UTM or Stereographic.
 
     Parameters
@@ -1551,6 +1591,8 @@ def utm_bounds(bounds: BoundingBox, crs: dict, skip_stereo: bool = True) -> Boun
         CRS data containing projection information.
     skip_stereo : bool, optional
         Skip conversion for stereographic projection, by default True.
+    forced_zone : int | None, optional
+        If specified, forces the conversion to the given UTM zone, by default None.
 
     Returns
     -------
@@ -1574,6 +1616,13 @@ def utm_bounds(bounds: BoundingBox, crs: dict, skip_stereo: bool = True) -> Boun
         utm_tr = LLAtoUTM(
             lla_tr, {"south": True} | crs if crs["proj"] == "utm" else crs
         )
+        return BoundingBox(utm_bl.x, utm_bl.y, utm_tr.x, utm_tr.y)
+    elif (crs["proj"] == "utm") and (forced_zone is not None):
+        lla_bl = UTMtoLLA(UTM(bounds.left, bounds.bottom), crs)
+        lla_tr = UTMtoLLA(UTM(bounds.right, bounds.top), crs)
+        crs["zone"] = forced_zone
+        utm_bl = LLAtoUTM(lla_bl, crs)
+        utm_tr = LLAtoUTM(lla_tr, crs)
         return BoundingBox(utm_bl.x, utm_bl.y, utm_tr.x, utm_tr.y)
     elif crs["proj"] == "utm":
         return bounds
