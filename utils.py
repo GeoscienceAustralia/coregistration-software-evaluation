@@ -1122,17 +1122,15 @@ def make_mosaic(
                 mse_list.append(mses)
             cls = dbscan.fit(np.array(mse_list))
             labels = cls.labels_
-            unique_labels = np.unique(labels)
-            print(f"Number of clusters in masks: {len(unique_labels) - 1}")
+            unique_labels = list(filter(lambda x: x != -1, np.unique(labels)))
+            print(f"Number of clusters in masks: {len(unique_labels)}")
             masks_dict = dict(
                 [(j, i) for i, j in zip(labels, range(len(masks)))]
             )  # Create a dictionary of masks with their labels and indices
             masks_per_cluster = []
-            for idx in range(
-                len(unique_labels) - 1
-            ):  # Range for the labels including -1 for noise
+            for label in unique_labels:  # Iterate over unique labels
                 cluster_masks_idx = [
-                    i for i in (range(len(labels))) if labels[i] == idx
+                    i for i in (range(len(labels))) if labels[i] == label
                 ]
                 cluster_masks = [masks[i] for i in cluster_masks_idx]
                 masks_per_cluster.append(np.logical_or.reduce(cluster_masks))
