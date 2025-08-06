@@ -968,6 +968,8 @@ def make_mosaic(
         force_crs = None
     else:
         first_crs_data = first_crs.data
+        if "zone" not in first_crs_data:
+            force_crs = None
     for p in dataset_paths:
         raster = rasterio.open(p)
         transform = raster.transform
