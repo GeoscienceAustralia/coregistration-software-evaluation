@@ -1099,6 +1099,23 @@ def make_mosaic(
             for i in range(0, 3):
                 mosaic[idx[0], idx[1], i] = imgw[idx[0], idx[1]]
         else:
+            if imgw.shape[2] == 1:
+                warnings.warn(
+                    "WARNING: Single channel image detected. Converting to 3 channels."
+                )
+                imgw = cv.merge([imgw] * 3)
+            elif imgw.shape[2] == 2:
+                warnings.warn(
+                    "WARNING: Two channel image detected. Converting to 3 channels."
+                )
+                imgw = cv.merge(
+                    [
+                        imgw[:, :, 0],
+                        imgw[:, :, 1],
+                        imgw[:, :, 0],
+                    ]
+                )
+
             idx = np.where(cv.cvtColor(imgw, cv.COLOR_BGR2GRAY) != 0)
             mosaic[idx[0], idx[1], :] = imgw[idx[0], idx[1], :]
 
