@@ -2570,6 +2570,7 @@ def query_stac_server(
     server_url: str,
     pystac: bool = False,
     return_pystac_items: bool = False,
+    max_cloud_cover: float | None = None,
 ) -> list | pystac.ItemCollection:
     """
     Queries the stac-server (STAC) backend.
@@ -2588,14 +2589,25 @@ def query_stac_server(
         If True, uses the pystac library to query the server, by default False.
     return_pystac_items : bool, optional
         If True, returns pystac items instead of raw features, by default False.
+    max_cloud_cover : float, optional
+        Maximum cloud cover percentage to filter items, by default None
     """
 
     if pystac:
         client = Client.open(server_url)
         search = client.search(**query)
+        items = search.item_collection()
+        if max_cloud_cover is not None:
+            print("Filtering items by cloud cover...")
+            items_list = [
+                item
+                for item in items
+                if item.properties["eo:cloud_cover"] < max_cloud_cover
+            ]
+        items = pystac.ItemCollection(items_list)
         if return_pystac_items:
-            return search.item_collection()
-        features = list(search.item_collection())
+            return items
+        features = list(items)
         if len(features) == 0:
             print("No features found.")
             return []
