@@ -49,7 +49,7 @@ from typing import Callable
 import warnings
 from sklearn.cluster import DBSCAN
 
-dbscan = DBSCAN()
+dbscan = DBSCAN(min_samples=2, eps=0.01)
 
 try:
     from arosics import COREG_LOCAL
@@ -1089,6 +1089,7 @@ def make_mosaic(
                 mask.astype(np.uint8),
                 new_transforms[i],
                 (new_shape[1], new_shape[0]),
+                borderValue=tuple([1] * mask.shape[2]),
                 flags=cv_flags,
             )
             maskw = np.where(maskw == 1, 1, 0).astype(bool)
@@ -1119,9 +1120,6 @@ def make_mosaic(
             idx = np.where(cv.cvtColor(imgw, cv.COLOR_BGR2GRAY) != 0)
             mosaic[idx[0], idx[1], :] = imgw[idx[0], idx[1], :]
 
-        if universal_masking:
-            mosaic[maskw] = 0
-
         if return_warps:
             warp = np.zeros_like(imgw).astype(output_type)
             if len(imgw.shape) == 2:
@@ -1132,14 +1130,13 @@ def make_mosaic(
 
     if universal_masking:
         if cluster_masks:
-            mse_list = []
-            for i in range(len(masks)):
-                mses = []
-                for j in range(len(masks)):
-                    mse_val = mse(masks[i], masks[j])
-                    mses.append(mse_val)
-                mse_list.append(mses)
-            cls = dbscan.fit(np.array(mse_list))
+            cls_list = np.array(
+                [
+                    np.mean(np.argwhere(np.all(ar, axis=2) == 0), axis=0) / ar.shape[:2]
+                    for ar in masks
+                ]
+            )
+            cls = dbscan.fit(np.array(cls_list))
             labels = cls.labels_
             unique_labels = list(filter(lambda x: x != -1, np.unique(labels)))
             print(f"Number of clusters in masks: {len(unique_labels)}")
@@ -1201,7 +1198,7 @@ def make_mosaic(
 
     return (
         mosaic,
-        warps,
+        ((warps, masks) if universal_masking else warps),
         (
             (mosaic_profile, original_mosaic_profile)
             if return_profile_only
