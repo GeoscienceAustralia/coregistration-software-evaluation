@@ -2565,7 +2565,7 @@ def apply_gamma(
 def query_stac_server(
     query: dict,
     server_url: str,
-    pystac: bool = False,
+    use_pystac: bool = False,
     return_pystac_items: bool = False,
     max_cloud_cover: float | None = None,
 ) -> list | pystac.ItemCollection:
@@ -2582,7 +2582,7 @@ def query_stac_server(
         Dictionary containing the query parameters for the STAC server.
     server_url : str
         URL of the STAC server to query.
-    pystac : bool, optional
+    use_pystac : bool, optional
         If True, uses the pystac library to query the server, by default False.
     return_pystac_items : bool, optional
         If True, returns pystac items instead of raw features, by default False.
@@ -2590,7 +2590,7 @@ def query_stac_server(
         Maximum cloud cover percentage to filter items, by default None
     """
 
-    if pystac:
+    if use_pystac:
         client = Client.open(server_url)
         search = client.search(**query)
         items = search.item_collection()
@@ -2638,7 +2638,9 @@ def query_stac_server(
                     query["limit"] = len(features)
 
             features = list(
-                itertools.chain(features, query_stac_server(query, server_url, pystac))
+                itertools.chain(
+                    features, query_stac_server(query, server_url, use_pystac)
+                )
             )
 
     return features
