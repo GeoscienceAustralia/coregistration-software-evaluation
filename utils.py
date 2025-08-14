@@ -890,7 +890,7 @@ def make_mosaic(
     universal_masking: bool = False,
     nodata: int | float | None = None,
     cluster_masks: bool = False,
-    force_crs: Literal["auto"] | None = "auto",
+    force_crs: Literal["auto"] | str | None = "auto",
 ) -> tuple:
     """
     Creates a mosaic of overlapping scenes. Offsets will be added to the size of the final mosaic if specified.
@@ -930,9 +930,10 @@ def make_mosaic(
     cluster_masks : bool, optional
         If True, clusters the masks of the datasets to create a universal mask.
         Defaults to False.
-    force_crs : Literal["auto"] | None, optional
+    force_crs : Literal["auto"] | dict | None, optional
         If "auto", the function will try to determine the CRS from the datasets.
         If None, the CRS will not be forced. Defaults to "auto".
+        If a str, the function will use the provided CRS information. The provided CRS should be in the form of an EPSG code (e.g., "EPSG:4326").
 
     Returns
     -------
@@ -967,40 +968,20 @@ def make_mosaic(
     if first_crs is None:
         force_crs = None
     else:
-        first_crs_data = first_crs.data
-        if "zone" not in first_crs_data:
-            force_crs = None
-    for p in dataset_paths:
-        raster = rasterio.open(p)
-        transform = raster.transform
-        ps_x.append(abs(transform.a))
-        ps_y.append(abs(transform.e))
-        rasters.append(raster)
-        transforms.append(transform)
-        if raster.crs is None:
-            warnings.warn(f"Dataset {p} does not have a CRS.")
-            corrected_bounds = raster.bounds
-            boundss.append(corrected_bounds)
+        if type(force_crs) == str and force_crs != "auto":
+            first_crs_data = force_crs
         else:
-            crs = raster.crs.data
-            if force_crs == "auto":
-                corrected_bounds = utm_bounds(
-                    raster.bounds, crs, forced_zone=first_crs_data["zone"]
-                )
-                boundss.append(corrected_bounds)
-            elif force_crs is None:
-                corrected_bounds = utm_bounds(raster.bounds, crs)
-                boundss.append(corrected_bounds)
-            else:
-                raise ValueError(
-                    "force_crs should be either 'auto' or None. Please check the documentation."
-                )
+            first_crs_data = f"EPSG:{first_crs.to_epsg()}"
 
-            crs_numbers.append(raster.crs.to_epsg())
+    for p in dataset_paths:
+        with rasterio.open(p, "r") as raster:
+            raster_crs = raster.crs
+            if raster_crs is not None:
+                crs_numbers.append(raster.crs.to_epsg())
 
-        original_boundss.append(corrected_bounds)
-
-    if np.any(np.diff(crs_numbers) != 0):
+    if type(force_crs) == str and force_crs != "auto":
+        print(f"Using provided CRS information: {force_crs}")
+    elif len(crs_numbers) != 0 and np.any(np.diff(crs_numbers) != 0):
         if force_crs is None:
             warnings.warn(
                 "Datasets have different CRS. The mosaicing process might fail with discrepancies in CRS information."
@@ -1009,6 +990,40 @@ def make_mosaic(
             warnings.warn(
                 f"Datasets have different CRS. The first CRS: {first_crs}, will be used for the mosaicing process."
             )
+    else:
+        force_crs = None
+
+    for p in dataset_paths:
+        raster_path = p
+        with rasterio.open(raster_path, "r") as raster:
+            raster_crs = raster.crs
+        if raster_crs is None:
+            warnings.warn(f"Dataset {p} does not have a CRS.")
+        else:
+            if force_crs == "auto" or type(force_crs) == str:
+                os.makedirs("temp/reproject", exist_ok=True)
+                new_p = f"temp/reproject/{os.path.basename(p)}"
+                reproject_tif(p, new_p, first_crs_data)
+                raster_path = new_p
+            elif force_crs is not None:
+                raise ValueError(
+                    "force_crs should be either 'auto' or None. Please check the documentation."
+                )
+
+        raster = rasterio.open(raster_path)
+        raster_crs = raster.crs
+        raster_utm_bounds = (
+            utm_bounds(raster.bounds, raster_crs.data)
+            if raster_crs is not None
+            else raster.bounds
+        )
+        boundss.append(raster_utm_bounds)
+        original_boundss.append(raster_utm_bounds)
+        transform = raster.transform
+        ps_x.append(abs(transform.a))
+        ps_y.append(abs(transform.e))
+        rasters.append(raster)
+        transforms.append(transform)
 
     selected_res_x = max(ps_x) if resampling_resolution == "lower" else min(ps_x)
     selected_res_y = max(ps_y) if resampling_resolution == "lower" else min(ps_y)
@@ -1172,6 +1187,8 @@ def make_mosaic(
 
     if resolution_adjustment:
         shutil.rmtree("temp/res_adjustment", ignore_errors=True)
+    if os.path.exists("temp/reproject"):
+        shutil.rmtree("temp/reproject", ignore_errors=True)
 
     mosaic_profile = rasterio.open(dataset_paths[0]).profile
     mosaic_profile["height"] = new_shape[0]
@@ -1185,6 +1202,9 @@ def make_mosaic(
         selected_res_x, 0.0, min_original_left, 0.0, -selected_res_y, max_original_top
     )
     original_mosaic_profile["dtype"] = output_type
+    if first_crs is not None:
+        mosaic_profile["crs"] = first_crs
+        original_mosaic_profile["crs"] = first_crs
 
     if mosaic_output_path != "":
         print("Writing mosaic file.")
@@ -1619,25 +1639,25 @@ def utm_bounds(
         return bounds
     if (crs["proj"] == "stere") and (skip_stereo):
         return bounds
+
+    lla_bl = UTMtoLLA(UTM(bounds.left, bounds.bottom), crs)
+    lla_tr = UTMtoLLA(UTM(bounds.right, bounds.top), crs)
+    lla_br = UTMtoLLA(UTM(bounds.right, bounds.bottom), crs)
+    lla_tl = UTMtoLLA(UTM(bounds.left, bounds.top), crs)
+    if (crs["proj"] == "utm") and ("south" not in crs) and (has_negative):
+        crs = {"south": True} | crs
     if (crs["proj"] == "stere") or (
-        (crs["proj"] == "utm") and ("south" not in crs) and (has_negative)
+        (crs["proj"] == "utm") and (forced_zone is not None)
     ):
-        lla_bl = UTMtoLLA(UTM(bounds.left, bounds.bottom), crs)
-        lla_tr = UTMtoLLA(UTM(bounds.right, bounds.top), crs)
-        utm_bl = LLAtoUTM(
-            lla_bl, {"south": True} | crs if crs["proj"] == "utm" else crs
-        )
-        utm_tr = LLAtoUTM(
-            lla_tr, {"south": True} | crs if crs["proj"] == "utm" else crs
-        )
-        return BoundingBox(utm_bl.x, utm_bl.y, utm_tr.x, utm_tr.y)
-    elif (crs["proj"] == "utm") and (forced_zone is not None):
-        lla_bl = UTMtoLLA(UTM(bounds.left, bounds.bottom), crs)
-        lla_tr = UTMtoLLA(UTM(bounds.right, bounds.top), crs)
-        crs["zone"] = forced_zone
+        if forced_zone is not None:
+            crs["zone"] = forced_zone
         utm_bl = LLAtoUTM(lla_bl, crs)
         utm_tr = LLAtoUTM(lla_tr, crs)
-        return BoundingBox(utm_bl.x, utm_bl.y, utm_tr.x, utm_tr.y)
+        utm_br = LLAtoUTM(lla_br, crs)
+        utm_tl = LLAtoUTM(lla_tl, crs)
+        xs = [utm.x for utm in [utm_bl, utm_tr, utm_br, utm_tl]]
+        ys = [utm.y for utm in [utm_bl, utm_tr, utm_br, utm_tl]]
+        return BoundingBox(min(xs), min(ys), max(xs), max(ys))
     elif crs["proj"] == "utm":
         return bounds
 
