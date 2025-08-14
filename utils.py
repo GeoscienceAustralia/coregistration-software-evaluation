@@ -622,6 +622,7 @@ def reproject_tif(
     dst_path: Path | str,
     dst_crs: str,
     resampling: Resampling = Resampling.bilinear,
+    verbose: bool = True,
 ):
     """Reprojects a raster file to a new coordinate reference system (CRS) and saves it to a new file.
 
@@ -635,10 +636,13 @@ def reproject_tif(
         Destination coordinate reference system in a format recognized by rasterio (e.g., "EPSG:4326").
     resampling : Resampling, optional
         Resampling method to use during reprojection. Defaults to Resampling.bilinear.
+    verbose : bool, optional
+        If True, print detailed information about the reprojection process. Defaults to True.
     """
 
     with rasterio.open(src_path) as src:
-        print(f"reprojecting from {src.crs} to {dst_crs}")
+        if verbose:
+            print(f"reprojecting from {src.crs} to {dst_crs}")
         transform, width, height = calculate_default_transform(
             src.crs, dst_crs, src.width, src.height, *src.bounds
         )
@@ -647,7 +651,8 @@ def reproject_tif(
             {"crs": dst_crs, "transform": transform, "width": width, "height": height}
         )
 
-        print(f"saving - {dst_path}")
+        if verbose:
+            print(f"saving - {dst_path}")
         with rasterio.open(dst_path, "w", **kwargs) as dst:
             for i in range(1, src.count + 1):
                 reproject(
@@ -1003,7 +1008,7 @@ def make_mosaic(
             if force_crs == "auto" or type(force_crs) == str:
                 os.makedirs("temp/reproject", exist_ok=True)
                 new_p = f"temp/reproject/{os.path.basename(p)}"
-                reproject_tif(p, new_p, first_crs_data)
+                reproject_tif(p, new_p, first_crs_data, verbose=False)
                 raster_path = new_p
             elif force_crs is not None:
                 raise ValueError(
@@ -1016,7 +1021,7 @@ def make_mosaic(
             utm_bounds(raster.bounds, raster_crs.data)
             if raster_crs is not None
             else raster.bounds
-        )
+        )  # I need to get rid of utm_bounds func at some point. technically doing nothing unless bounds are negative.
         boundss.append(raster_utm_bounds)
         original_boundss.append(raster_utm_bounds)
         transform = raster.transform
@@ -4722,8 +4727,8 @@ def combine_comparison_results(
 
 def reproject_bounds(
     bounds: list[list | rasterio.coords.BoundingBox],
-    source_crs: str | list[str],
-    dest_crs: str = "4326",
+    source_crs: str | int | list[str] | list[int],
+    dest_crs: str | int = "EPSG:4326",
     inverse_xy: bool = False,
     rounding_precision: int | None = None,
 ) -> list[list]:
@@ -4731,16 +4736,21 @@ def reproject_bounds(
     Reprojects bounding boxes to the given `crs.
     """
 
-    if isinstance(source_crs, str):
+    if isinstance(source_crs, str) or isinstance(source_crs, int):
         source_crs = [source_crs] * len(bounds)
+
+    source_crs = [str(crs) for crs in source_crs]
+    dest_crs = str(dest_crs)
 
     for i, crs in enumerate(source_crs):
         if "EPSG:" not in crs:
             source_crs[i] = f"EPSG:{crs}"
+    if "EPSG:" not in dest_crs:
+        dest_crs = f"EPSG:{dest_crs}"
 
     new_bounds = []
     for c, b in zip(source_crs, bounds):
-        transformer = Transformer.from_crs(c, f"EPSG:{dest_crs}")
+        transformer = Transformer.from_crs(c, dest_crs)
         if isinstance(b, rasterio.coords.BoundingBox):
             xmin = b.left
             xmax = b.right
@@ -4748,11 +4758,13 @@ def reproject_bounds(
             ymin = b.bottom
         else:
             xmin, ymin, xmax, ymax = b
-        ul = transformer.transform(xmin, ymax)
-        lr = transformer.transform(xmax, ymin)
+        tl = transformer.transform(xmin, ymax)
+        tr = transformer.transform(xmax, ymax)
+        br = transformer.transform(xmax, ymin)
+        bl = transformer.transform(xmin, ymin)
 
-        new_x = [ul[0], lr[0]]
-        new_y = [ul[1], lr[1]]
+        new_x = [tl[0], tr[0], br[0], bl[0]]
+        new_y = [tl[1], tr[1], br[1], bl[1]]
 
         if rounding_precision is not None:
             new_x = [round(coord, rounding_precision) for coord in new_x]
