@@ -2626,6 +2626,8 @@ def query_stac_server(
                 for item in items
                 if item.properties["eo:cloud_cover"] < max_cloud_cover
             ]
+        else:
+            items_list = items
         items = pystac.ItemCollection(items_list)
         if return_pystac_items:
             return items
@@ -4778,7 +4780,11 @@ def reproject_bounds(
     return new_bounds
 
 
-def write_bounds_to_kml(bounds, filename, poly_names: list | None = None):
+def write_bounds_to_kml(
+    bounds: list[BoundingBox] | BoundingBox, filename, poly_names: list | None = None
+):
+    if type(bounds) is not list:
+        bounds = [bounds]
     with open(filename, "w") as f:
         f.write(
             '<?xml version="1.0" encoding="UTF-8"?>\n'
