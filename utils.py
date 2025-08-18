@@ -2680,6 +2680,7 @@ def find_scenes_dict(
     acceptance_list: list[str] = [],
     remove_duplicate_times: bool = True,
     duplicate_idx: int = 0,
+    min_scenes_per_id: int | None = None,
 ) -> tuple:
     """Generates a dictionary of scenes from the provided features.
 
@@ -2695,9 +2696,11 @@ def find_scenes_dict(
     acceptance_list : list[str], optional
         List of asset names to accept, by default []
     remove_duplicate_times : bool, optional
-        Remmove duplicate times based on the `duplicate_idx`, by default True
+        Remove duplicate times based on the `duplicate_idx`, by default True
     duplicate_idx : int, optional
         Index of the duplicate time to keep, by default 0
+    min_scenes_per_id : int | None, optional
+        Minimum number of scenes required per ID, by default None
 
     Returns
     -------
@@ -2781,6 +2784,7 @@ def find_scenes_dict(
             se = se.iloc[valid_idx]
         groups = list(se.groupby(g))
         temp_dict_time = {}
+        scene_list_temp = []
         for i, t in enumerate([el[0] for el in groups]):
             if type(t) == tuple:
                 t = t[0]
@@ -2823,9 +2827,22 @@ def find_scenes_dict(
                         times_idx.append(idx[temp_idx])
                 temp_list = [temp_list[idx] for idx in times_idx]
 
-            scene_list.extend(temp_list)
+            scene_list_temp.extend(temp_list)
             temp_dict_time[t] = temp_list
+
+        if min_scenes_per_id is not None:
+            if (
+                sum(
+                    [
+                        len(sc)
+                        for sc in [temp_dict_time[kk] for kk in temp_dict_time.keys()]
+                    ]
+                )
+                < min_scenes_per_id
+            ):
+                continue
         scene_dict_pr_time[pr] = temp_dict_time
+        scene_list.extend(scene_list_temp)
 
     return scene_dict_pr_time, scene_list
 
