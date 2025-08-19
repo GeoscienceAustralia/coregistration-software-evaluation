@@ -4825,6 +4825,7 @@ def create_dataset_from_files(
     crs: int | None = None,
     bands: list[str] | None = None,
     remove_val: float | int | None = 0,
+    chunks: dict = {},
 ) -> xr.Dataset:
     """Create an xarray dataset from the list of files and times.
 
@@ -4840,6 +4841,9 @@ def create_dataset_from_files(
         List of band names to rename the dataset variables. If None, uses default band names.
     remove_val : float | int | None, optional
         Value to remove from the dataset. If None, no values are removed. Default is 0.
+        If a float or int, all values equal to this will be set to NaN.
+    chunks : dict, optional
+        Dictionary specifying the chunk sizes for the dataset. If None, no chunking is applied.
 
     Returns
     -------
@@ -4851,7 +4855,7 @@ def create_dataset_from_files(
         times = [str(i) for i in range(len(files))]
 
     dsl = [
-        rxr.open_rasterio(f, band_as_variable=True, chunks={})[
+        rxr.open_rasterio(f, band_as_variable=True, chunks=chunks)[
             [f"band_{i+1}" for i in range(len(bands))]
         ]
         .astype("float32")
