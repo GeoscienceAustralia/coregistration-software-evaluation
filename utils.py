@@ -4099,7 +4099,8 @@ def process_existing_outputs(
     scale_factor: float = 0.2,
     filename_suffix: str = "PROC",
     num_cpu: int = 1,
-):
+    write_pairs: bool = True,
+) -> None:
     """Processes existing files into composite scenes and saves them to the specified output directory.
 
     Parameters
@@ -4140,6 +4141,8 @@ def process_existing_outputs(
         Suffix to append to the processed file names, by default "PROC"
     num_cpu: int, optional
         Number of CPU cores to use for processing, by default 1
+    write_pairs: bool = True,
+        Whether to write image pairs to the output directory, by default True
     """
     os.makedirs(output_dir, exist_ok=True)
 
@@ -4190,9 +4193,9 @@ def process_existing_outputs(
 
     if num_cpu == -1:
         num_cpu = mp.cpu_count() - 1
-        print(f"Using {num_cpu} CPU cores.")
 
     if num_cpu > 1:
+        print(f"Using {num_cpu} CPU cores.")
         with mp.Pool(num_cpu) as pool:
             pool.starmap(
                 make_composite_scene,
@@ -4228,21 +4231,23 @@ def process_existing_outputs(
                 ],
             )
 
-    cols = ["Reference", "Closest_target", "Farthest_target"]
-    df = pd.DataFrame(
-        {
-            cols[i]: [
-                file,
-                proc_files_ds[i],
-            ]
-            for i, file in enumerate(proc_files)
-        },
-        columns=cols,
-    )
-    df.to_csv(
-        f"{output_dir}/pairs.csv",
-        index=False,
-    )
+    if write_pairs:
+        cols = ["Reference", "Closest_target", "Farthest_target"]
+        df = pd.DataFrame(
+            {
+                cols[i]: [
+                    file,
+                    proc_files_ds[i],
+                ]
+                for i, file in enumerate(proc_files)
+            },
+            columns=cols,
+        )
+        df.to_csv(
+            f"{output_dir}/pairs.csv",
+            index=False,
+        )
+    return None
 
 
 def download_and_process_series(
@@ -4433,6 +4438,8 @@ def download_and_process_series(
                             ds.write(band_img[i, :, :], i + 1)
 
         if download_only:
+            el["local_path"] = proc_file
+            el["local_path_ds"] = proc_file_ds
             print("Download only mode is enabled, skipping processing.")
             continue
 
@@ -4973,7 +4980,7 @@ def create_dataset_from_files(
     ds = ds[["y", "x", "spatial_ref", "time"] + bands]
 
     if scale_factor is not None:
-        ds = resample_xarray_dataset(ds, scale_factor)
+        ds = resample_xarray_dataset(ds, scale_factor).chunk(chunks=chunks)
 
     if remove_val is not None:
         print(f"Removing values equal to {remove_val} from the dataset.")
