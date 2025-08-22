@@ -48,6 +48,8 @@ import pystac
 from typing import Callable
 import warnings
 from sklearn.cluster import DBSCAN
+import multiprocess as mp
+
 
 dbscan = DBSCAN(min_samples=2, eps=0.01)
 
@@ -4094,12 +4096,15 @@ def process_existing_outputs(
     min_max_scaling: bool = True,
     three_channel: bool = False,
     remove_nans: bool = False,
+    scale_factor: float = 0.2,
+    filename_suffix: str = "PROC",
+    num_cpu: int = 1,
 ):
     """Processes existing files into composite scenes and saves them to the specified output directory.
 
     Parameters
     ----------
-    existing_files : list[str]
+    existing_files : list[str] | list[list[str]]
         List of existing file paths to be processed.
     output_dir : str
         Output directory where processed files will be saved.
@@ -4129,6 +4134,12 @@ def process_existing_outputs(
         If True, the composite image will have three channels, by default False
     remove_nans : bool, optional
         If True, removes NaN values from the processed images, by default False
+    scale_factor: float, optional
+        Scale factor for downsampling the images, by default 0.2
+    file_name_suffix: str, optional
+        Suffix to append to the processed file names, by default "PROC"
+    num_cpu: int, optional
+        Number of CPU cores to use for processing, by default 1
     """
     os.makedirs(output_dir, exist_ok=True)
 
@@ -4146,30 +4157,76 @@ def process_existing_outputs(
     proc_files = []
     proc_files_ds = []
     for file in existing_files:
-        proc_file = os.path.join(process_dir, os.path.basename(file))
-        proc_file_ds = os.path.join(process_ds_dir, os.path.basename(file))
+        if type(file) is str:
+            proc_file = os.path.join(process_dir, os.path.basename(file))
+        else:
+            ext = os.path.splitext(file[0])[1]
+            originals_dir = os.path.basename(os.path.dirname(file[0]))
+            proc_file = f"{os.path.join(process_dir, os.path.basename(originals_dir))}_{filename_suffix}{ext}"
+        proc_file_ds = os.path.join(process_ds_dir, os.path.basename(proc_file))
         proc_files.append(proc_file)
         proc_files_ds.append(proc_file_ds)
         if os.path.isfile(proc_file):
             print(f"Scene {proc_file} already exists, skipping.")
             continue
-        make_composite_scene(
-            file,
-            proc_file,
-            gamma,
-            equalise_histogram,
-            stretch_contrast,
-            gray_scale,
-            averaging,
-            edge_detection,
-            edge_detection_mode,
-            True,
-            preserve_depth,
-            min_max_scaling,
-            three_channel,
-            remove_nans,
-        )
-        downsample_dataset(proc_file, 0.2, proc_file_ds)
+        if num_cpu == 1:
+            make_composite_scene(
+                file,
+                proc_file,
+                gamma,
+                equalise_histogram,
+                stretch_contrast,
+                gray_scale,
+                averaging,
+                edge_detection,
+                edge_detection_mode,
+                True if type(file) is str else False,
+                preserve_depth,
+                min_max_scaling,
+                three_channel,
+                remove_nans,
+            )
+            downsample_dataset(proc_file, scale_factor, proc_file_ds)
+
+    if num_cpu == -1:
+        num_cpu = mp.cpu_count() - 1
+        print(f"Using {num_cpu} CPU cores.")
+
+    if num_cpu > 1:
+        with mp.Pool(num_cpu) as pool:
+            pool.starmap(
+                make_composite_scene,
+                [
+                    (
+                        file,
+                        proc_file,
+                        gamma,
+                        equalise_histogram,
+                        stretch_contrast,
+                        gray_scale,
+                        averaging,
+                        edge_detection,
+                        edge_detection_mode,
+                        True if type(file) is str else False,
+                        preserve_depth,
+                        min_max_scaling,
+                        three_channel,
+                        remove_nans,
+                    )
+                    for file, proc_file in list(zip(existing_files, proc_files))
+                ],
+            )
+            pool.starmap(
+                downsample_dataset,
+                [
+                    (
+                        proc_file,
+                        scale_factor,
+                        proc_file_ds,
+                    )
+                    for proc_file, proc_file_ds in list(zip(proc_files, proc_files_ds))
+                ],
+            )
 
     cols = ["Reference", "Closest_target", "Farthest_target"]
     df = pd.DataFrame(
@@ -4820,19 +4877,20 @@ def write_bounds_to_kml(
 
 
 def create_dataset_from_files(
-    files: list[str],
+    paths: list[str],
     times: list[datetime] | list[str] | None = None,
     crs: int | None = None,
     bands: list[str] | None = None,
     remove_val: float | int | None = 0,
     chunks: dict = {},
+    scale_factor: float | None = None,
 ) -> xr.Dataset:
     """Create an xarray dataset from the list of files and times.
 
     Parameters
     ----------
-    files : list[str]
-        List of file paths to the raster files.
+    paths : list[str]
+        List of file or dir paths to the raster files.
     times : list[datetime] | list[str] | None, optional
         List of times corresponding to the files. If None, uses indices as strings.
     crs : int | None, optional
@@ -4844,6 +4902,8 @@ def create_dataset_from_files(
         If a float or int, all values equal to this will be set to NaN.
     chunks : dict, optional
         Dictionary specifying the chunk sizes for the dataset. If None, no chunking is applied.
+    scale_factor : float | None, optional
+        Factor by which to scale the dataset. If None, no scaling is applied.
 
     Returns
     -------
@@ -4852,27 +4912,68 @@ def create_dataset_from_files(
     """
 
     if times is None:
-        times = [str(i) for i in range(len(files))]
+        times = [str(i) for i in range(len(paths))]
 
-    dsl = [
-        rxr.open_rasterio(f, band_as_variable=True, chunks=chunks)[
-            [f"band_{i+1}" for i in range(len(bands))]
+    if os.path.isfile(paths[0]):
+        if bands is None:
+            bands = [f"band_{i+1}" for i in range(rasterio.open(paths[0]).count)]
+        dsl = [
+            rxr.open_rasterio(f, band_as_variable=True, chunks=chunks)[
+                [f"band_{i+1}" for i in range(len(bands))]
+            ]
+            .astype("float32")
+            .assign_coords(time=t)
+            .expand_dims("time", axis=2)
+            for (f, t) in zip(paths, times)
         ]
-        .astype("float32")
-        .assign_coords(time=t)
-        .expand_dims("time", axis=2)
-        for (f, t) in zip(files, times)
-    ]
+    else:
+        dsl = []
+        for j, dir in enumerate(paths):
+            files = glob.glob(f"{dir}/**")
+            if bands is None:
+                bands = [f"band_{i+1}" for i in range(len(files))]
+            band_array = [
+                rxr.open_rasterio(f, chunks=chunks)
+                .astype("float32")
+                .assign_coords(time=times[j])
+                .expand_dims("time", axis=2)
+                for f in files
+            ]
+            temp_ds = xr.Dataset(
+                {
+                    f"band_{i+1}": (("time", "y", "x"), br.data[:, :, 0, :])
+                    for i, br in enumerate(band_array)
+                },
+                coords={
+                    "time": [times[j]],
+                    "y": np.unique(
+                        np.sort(
+                            xr.concat(
+                                [b.coords["y"] for b in band_array], dim="time"
+                            ).data.ravel()
+                        )
+                    ),
+                    "x": np.unique(
+                        np.sort(
+                            xr.concat(
+                                [b.coords["x"] for b in band_array], dim="time"
+                            ).data.ravel()
+                        )
+                    ),
+                },
+            )
+            dsl.append(temp_ds)
     print(len(dsl), "datasets found in the target directory.")
     ds = xr.concat(dsl, dim="time").transpose("time", "y", "x").drop_attrs()
     if crs is not None:
         ds["spatial_ref"] = np.int32(crs)
+        ds = ds.rio.write_crs(f"epsg:{crs}")
 
-    if bands is not None:
-        ds = ds.rename_vars({f"band_{i+1}": b for i, b in enumerate(bands)})
-        ds = ds[["y", "x", "spatial_ref", "time"] + bands]
-    else:
-        ds = ds[["y", "x", "spatial_ref", "time"]]
+    ds = ds.rename_vars({f"band_{i+1}": b for i, b in enumerate(bands)})
+    ds = ds[["y", "x", "spatial_ref", "time"] + bands]
+
+    if scale_factor is not None:
+        ds = resample_xarray_dataset(ds, scale_factor)
 
     if remove_val is not None:
         print(f"Removing values equal to {remove_val} from the dataset.")
