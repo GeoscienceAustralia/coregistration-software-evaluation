@@ -4192,7 +4192,7 @@ def process_existing_outputs(
             downsample_dataset(proc_file, scale_factor, proc_file_ds)
 
     if num_cpu == -1:
-        num_cpu = mp.cpu_count() - 1
+        num_cpu = mp.cpu_count() - 2
 
     if num_cpu > 1:
         print(f"Using {num_cpu} CPU cores.")
