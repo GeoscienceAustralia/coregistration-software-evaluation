@@ -4165,6 +4165,7 @@ def process_existing_outputs(
     proc_file_to_process = []
     proc_file_ds_to_process = []
     existing_files_to_process = []
+    proc_for_ds = []
     for file in existing_files:
         if type(file) is str:
             proc_file = os.path.join(process_dir, os.path.basename(file))
@@ -4187,7 +4188,6 @@ def process_existing_outputs(
 
         if os.path.isfile(proc_file):
             print(f"Scene {proc_file} already exists, skipping.")
-            continue
         else:
             if num_cpu == 1:
                 make_composite_scene(
@@ -4212,11 +4212,11 @@ def process_existing_outputs(
                 existing_files_to_process.append(file)
         if os.path.isfile(proc_file_ds):
             print(f"Scene {proc_file_ds} already exists, skipping.")
-            continue
         else:
             if num_cpu == 1:
                 downsample_dataset(proc_file, scale_factor, proc_file_ds)
             else:
+                proc_for_ds.append(proc_file)
                 proc_file_ds_to_process.append(proc_file_ds)
 
     if num_cpu == -1:
@@ -4259,7 +4259,7 @@ def process_existing_outputs(
                         proc_file_ds,
                     )
                     for proc_file, proc_file_ds in list(
-                        zip(proc_file_to_process, proc_file_ds_to_process)
+                        zip(proc_for_ds, proc_file_ds_to_process)
                     )
                 ],
             )
