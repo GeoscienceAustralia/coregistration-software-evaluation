@@ -4090,7 +4090,7 @@ def process_existing_outputs(
     stretch_contrast: bool = False,
     gray_scale: bool = False,
     averaging: bool = False,
-    subdir: str = "true_color",
+    subdir: str = "true_colour",
     force_reprocess: bool = False,
     preserve_depth: bool = False,
     min_max_scaling: bool = True,
@@ -4100,6 +4100,7 @@ def process_existing_outputs(
     filename_suffix: str = "PROC",
     num_cpu: int = 1,
     write_pairs: bool = True,
+    reference_band_number: int | None = None,
 ) -> None:
     """Processes existing files into composite scenes and saves them to the specified output directory.
 
@@ -4143,6 +4144,8 @@ def process_existing_outputs(
         Number of CPU cores to use for processing, by default 1
     write_pairs: bool = True,
         Whether to write image pairs to the output directory, by default True
+    reference_band_number : int | None, optional
+        Reference band number for the reprojecting and resampling the images to the reference image, by default None
     """
     os.makedirs(output_dir, exist_ok=True)
 
@@ -4165,6 +4168,15 @@ def process_existing_outputs(
         else:
             ext = os.path.splitext(file[0])[1]
             originals_dir = os.path.basename(os.path.dirname(file[0]))
+            original_file_name = os.path.basename(file[0])
+            suffix_list = list(
+                filter(
+                    lambda x: x != "" and ext not in x,
+                    original_file_name.replace(originals_dir, "").split("_"),
+                )
+            )
+            if len(suffix_list) > 0:
+                filename_suffix = f"{suffix_list[0]}_{filename_suffix}"
             proc_file = f"{os.path.join(process_dir, os.path.basename(originals_dir))}_{filename_suffix}{ext}"
         proc_file_ds = os.path.join(process_ds_dir, os.path.basename(proc_file))
         proc_files.append(proc_file)
@@ -4184,6 +4196,7 @@ def process_existing_outputs(
                 edge_detection,
                 edge_detection_mode,
                 True if type(file) is str else False,
+                reference_band_number,
                 preserve_depth,
                 min_max_scaling,
                 three_channel,
@@ -4211,6 +4224,7 @@ def process_existing_outputs(
                         edge_detection,
                         edge_detection_mode,
                         True if type(file) is str else False,
+                        reference_band_number,
                         preserve_depth,
                         min_max_scaling,
                         three_channel,
