@@ -4162,6 +4162,9 @@ def process_existing_outputs(
 
     proc_files = []
     proc_files_ds = []
+    proc_file_to_process = []
+    proc_file_ds_to_process = []
+    existing_files_to_process = []
     for file in existing_files:
         if type(file) is str:
             proc_file = os.path.join(process_dir, os.path.basename(file))
@@ -4181,28 +4184,40 @@ def process_existing_outputs(
         proc_file_ds = os.path.join(process_ds_dir, os.path.basename(proc_file))
         proc_files.append(proc_file)
         proc_files_ds.append(proc_file_ds)
+
         if os.path.isfile(proc_file):
             print(f"Scene {proc_file} already exists, skipping.")
             continue
-        if num_cpu == 1:
-            make_composite_scene(
-                file,
-                proc_file,
-                gamma,
-                equalise_histogram,
-                stretch_contrast,
-                gray_scale,
-                averaging,
-                edge_detection,
-                edge_detection_mode,
-                True if type(file) is str else False,
-                reference_band_number,
-                preserve_depth,
-                min_max_scaling,
-                three_channel,
-                remove_nans,
-            )
-            downsample_dataset(proc_file, scale_factor, proc_file_ds)
+        else:
+            if num_cpu == 1:
+                make_composite_scene(
+                    file,
+                    proc_file,
+                    gamma,
+                    equalise_histogram,
+                    stretch_contrast,
+                    gray_scale,
+                    averaging,
+                    edge_detection,
+                    edge_detection_mode,
+                    True if type(file) is str else False,
+                    reference_band_number,
+                    preserve_depth,
+                    min_max_scaling,
+                    three_channel,
+                    remove_nans,
+                )
+            else:
+                proc_file_to_process.append(proc_file)
+                existing_files_to_process.append(file)
+        if os.path.isfile(proc_file_ds):
+            print(f"Scene {proc_file_ds} already exists, skipping.")
+            continue
+        else:
+            if num_cpu == 1:
+                downsample_dataset(proc_file, scale_factor, proc_file_ds)
+            else:
+                proc_file_ds_to_process.append(proc_file_ds)
 
     if num_cpu == -1:
         num_cpu = mp.cpu_count() - 2
@@ -4230,7 +4245,9 @@ def process_existing_outputs(
                         three_channel,
                         remove_nans,
                     )
-                    for file, proc_file in list(zip(existing_files, proc_files))
+                    for file, proc_file in list(
+                        zip(existing_files_to_process, proc_file_to_process)
+                    )
                 ],
             )
             pool.starmap(
@@ -4241,7 +4258,9 @@ def process_existing_outputs(
                         scale_factor,
                         proc_file_ds,
                     )
-                    for proc_file, proc_file_ds in list(zip(proc_files, proc_files_ds))
+                    for proc_file, proc_file_ds in list(
+                        zip(proc_file_to_process, proc_file_ds_to_process)
+                    )
                 ],
             )
 
