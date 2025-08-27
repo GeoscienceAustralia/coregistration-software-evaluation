@@ -898,6 +898,7 @@ def make_mosaic(
     nodata: int | float | None = None,
     cluster_masks: bool = False,
     force_crs: Literal["auto"] | str | None = "auto",
+    no_affine: bool = False,
 ) -> tuple:
     """
     Creates a mosaic of overlapping scenes. Offsets will be added to the size of the final mosaic if specified.
@@ -941,6 +942,8 @@ def make_mosaic(
         If "auto", the function will try to determine the CRS from the datasets.
         If None, the CRS will not be forced. Defaults to "auto".
         If a str, the function will use the provided CRS information. The provided CRS should be in the form of an EPSG code (e.g., "EPSG:4326").
+    no_affine: bool, optional
+        Does not perform affine transformation and assumes the images are already geo-referenced.
 
     Returns
     -------
@@ -1090,6 +1093,8 @@ def make_mosaic(
             )
         )
 
+    if no_affine:
+        new_shape = rasterio.open(rasters[0]).read(1).shape
     mosaic = np.zeros((*new_shape, 3)).astype(output_type)
     warps = []
     masks = []
@@ -1100,20 +1105,26 @@ def make_mosaic(
             img = data.data
         else:
             img = flip_img(rs.read())
-        imgw = cv.warpAffine(
-            img,
-            new_transforms[i],
-            (new_shape[1], new_shape[0]),
-            flags=cv_flags,
-        )
-        if universal_masking:
-            maskw = cv.warpAffine(
-                mask.astype(np.uint8),
+        if no_affine:
+            imgw = img.copy()
+        else:
+            imgw = cv.warpAffine(
+                img,
                 new_transforms[i],
                 (new_shape[1], new_shape[0]),
-                borderValue=tuple([1] * mask.shape[2]),
                 flags=cv_flags,
             )
+        if universal_masking:
+            if no_affine:
+                maskw = mask.copy().astype(np.uint8)
+            else:
+                maskw = cv.warpAffine(
+                    mask.astype(np.uint8),
+                    new_transforms[i],
+                    (new_shape[1], new_shape[0]),
+                    borderValue=tuple([1] * mask.shape[2]),
+                    flags=cv_flags,
+                )
             maskw = np.where(maskw == 1, 1, 0).astype(bool)
             masks.append(maskw)
 
@@ -4161,7 +4172,8 @@ def process_existing_outputs(
         shutil.rmtree(process_ds_dir, ignore_errors=True)
 
     os.makedirs(process_dir, exist_ok=True)
-    os.makedirs(process_ds_dir, exist_ok=True)
+    if scale_factor != 1.0:
+        os.makedirs(process_ds_dir, exist_ok=True)
 
     proc_files = []
     proc_files_ds = []
@@ -4213,14 +4225,16 @@ def process_existing_outputs(
             else:
                 proc_file_to_process.append(proc_file)
                 existing_files_to_process.append(file)
-        if os.path.isfile(proc_file_ds):
-            print(f"Scene {proc_file_ds} already exists, skipping.")
-        else:
-            if num_cpu == 1:
-                downsample_dataset(proc_file, scale_factor, proc_file_ds)
+
+        if scale_factor != 1.0:
+            if os.path.isfile(proc_file_ds):
+                print(f"Scene {proc_file_ds} already exists, skipping.")
             else:
-                proc_for_ds.append(proc_file)
-                proc_file_ds_to_process.append(proc_file_ds)
+                if num_cpu == 1:
+                    downsample_dataset(proc_file, scale_factor, proc_file_ds)
+                else:
+                    proc_for_ds.append(proc_file)
+                    proc_file_ds_to_process.append(proc_file_ds)
 
     if num_cpu == -1:
         num_cpu = mp.cpu_count() - 2
@@ -4253,19 +4267,20 @@ def process_existing_outputs(
                     )
                 ],
             )
-            pool.starmap(
-                downsample_dataset,
-                [
-                    (
-                        proc_file,
-                        scale_factor,
-                        proc_file_ds,
-                    )
-                    for proc_file, proc_file_ds in list(
-                        zip(proc_for_ds, proc_file_ds_to_process)
-                    )
-                ],
-            )
+            if scale_factor != 1.0:
+                pool.starmap(
+                    downsample_dataset,
+                    [
+                        (
+                            proc_file,
+                            scale_factor,
+                            proc_file_ds,
+                        )
+                        for proc_file, proc_file_ds in list(
+                            zip(proc_for_ds, proc_file_ds_to_process)
+                        )
+                    ],
+                )
 
     if write_pairs:
         cols = ["Reference", "Closest_target", "Farthest_target"]
@@ -4273,7 +4288,7 @@ def process_existing_outputs(
             {
                 cols[i]: [
                     file,
-                    proc_files_ds[i],
+                    proc_files_ds[i] if scale_factor != 1.0 else "",
                 ]
                 for i, file in enumerate(proc_files)
             },
