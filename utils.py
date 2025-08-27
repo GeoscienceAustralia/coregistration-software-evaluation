@@ -1158,6 +1158,9 @@ def make_mosaic(
                     for ar in masks
                 ]
             )
+            nan_inds = np.where(np.isnan(cls_list[:, 0]))[0]
+            nan_arr = np.arange(1, len(nan_inds) + 1) * -1
+            cls_list[nan_inds] = np.stack([nan_arr, nan_arr], axis=1)
             cls = dbscan.fit(np.array(cls_list))
             labels = cls.labels_
             unique_labels = list(filter(lambda x: x != -1, np.unique(labels)))

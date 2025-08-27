@@ -9,11 +9,19 @@ scikit-learn
 scikit-image
 requests
 black
+black[jupyter]
 pykml
 utm
 boto3
+xarray
 rioxarray
 pystac-client
 dem-handler @ git+https://github.com/GeoscienceAustralia/dem-handler.git@main
 rioxarray
 pystac_client
+imageio
+pystac
+multiprocess
+geom_median
+dask[distributed]
+ipykernel
