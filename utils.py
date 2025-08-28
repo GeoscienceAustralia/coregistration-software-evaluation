@@ -1094,7 +1094,7 @@ def make_mosaic(
         )
 
     if no_affine:
-        new_shape = rasterio.open(rasters[0]).read(1).shape
+        new_shape = rasters[0].shape
     mosaic = np.zeros((*new_shape, 3)).astype(output_type)
     warps = []
     masks = []
