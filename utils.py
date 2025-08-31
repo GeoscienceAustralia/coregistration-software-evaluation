@@ -3235,6 +3235,8 @@ def stream_scene_from_aws(
     geotiff_file,
     aws_session: rasterio.session.AWSSession | None = None,
     metadata_only: bool = False,
+    stream_out_shape: tuple | None = None,
+    stream_reshape_method: Resampling = Resampling.bilinear,
 ):
     """Streams a GeoTIFF scene from AWS S3 using rasterio.
 
@@ -3246,6 +3248,11 @@ def stream_scene_from_aws(
         AWS session for authentication, by default None
     metadata_only : bool, optional
         Only retrieve metadata without reading the data, by default False
+    stream_out_shape: tuple | None, optional
+        Desired output shape for the streamed data (h, w), by default None
+        `scale_factor` resamples the streamed data, even if the streamed data already is reshaped.
+    stream_reshape_method: Resampling = Resampling.bilinear
+        Resampling method used for reshaping the streamed data.
     """
 
     def get_data():
@@ -3254,7 +3261,23 @@ def stream_scene_from_aws(
             bounds = geo_fp.bounds
             crs = geo_fp.crs
             if not metadata_only:
-                scene = geo_fp.read()
+                if stream_out_shape is not None:
+                    scene = geo_fp.read(
+                        out_shape=(geo_fp.count, *stream_out_shape),
+                        resampling=stream_reshape_method,
+                    )
+                    transform = geo_fp.transform * geo_fp.transform.scale(
+                        (geo_fp.width / stream_out_shape[1]),
+                        (geo_fp.height / stream_out_shape[0]),
+                    )
+                    profile.update(
+                        transform=transform,
+                        width=stream_out_shape[1],
+                        height=stream_out_shape[0],
+                        dtype=scene.dtype,
+                    )
+                else:
+                    scene = geo_fp.read()
             else:
                 scene = None
         return scene, profile, bounds, crs
@@ -4329,6 +4352,8 @@ def download_and_process_series(
     three_channel: bool = False,
     remove_nans: bool = False,
     force_reprocess: bool = False,
+    stream_out_shape: tuple | None = None,
+    stream_reshape_method: Resampling = Resampling.bilinear,
 ) -> list:
     """Downloads and processes a series of scenes from AWS S3, creating composite images from the specified bands.
 
@@ -4388,6 +4413,11 @@ def download_and_process_series(
         If True, removes NaN values from the processed images, by default False
     force_reprocess : bool, optional
         If True, forces reprocessing of existing files, by default False
+    stream_out_shape: tuple | None, optional
+        Desired output shape for the streamed data (h, w), by default None
+        `scale_factor` resamples the streamed data, even if the streamed data already is reshaped.
+    stream_reshape_method: Resampling = Resampling.bilinear
+        Resampling method used for reshaping the streamed data.
 
     Returns
     -------
@@ -4442,7 +4472,11 @@ def download_and_process_series(
         proc_exists = False
         proc_ds_exists = False
         proc_file = f"{os.path.join(process_dir, os.path.basename(originals_dir))}_{filename_suffix}{ext}"
-        proc_file_ds = os.path.join(process_ds_dir, os.path.basename(proc_file))
+        proc_file_ds = (
+            os.path.join(process_ds_dir, os.path.basename(proc_file))
+            if scale_factor != 1.0
+            else ""
+        )
 
         if not download_only:
             if os.path.isfile(proc_file):
@@ -4483,7 +4517,12 @@ def download_and_process_series(
                 if os.path.isfile(band_output):
                     print(f"Original file for {band} band already exists, skipping.")
                 else:
-                    band_img, band_meta = stream_scene_from_aws(band_url, aws_session)
+                    band_img, band_meta = stream_scene_from_aws(
+                        band_url,
+                        aws_session,
+                        stream_out_shape=stream_out_shape,
+                        stream_reshape_method=stream_reshape_method,
+                    )
                     with rasterio.open(band_output, "w", **band_meta["profile"]) as ds:
                         for i in range(band_meta["profile"]["count"]):
                             ds.write(band_img[i, :, :], i + 1)
@@ -4530,7 +4569,7 @@ def download_and_process_series(
                 three_channel,
                 remove_nans,
             )
-        if not proc_ds_exists:
+        if not proc_ds_exists and scale_factor != 1.0:
             downsample_dataset(proc_file, scale_factor, proc_file_ds)
 
         el["local_path"] = proc_file
