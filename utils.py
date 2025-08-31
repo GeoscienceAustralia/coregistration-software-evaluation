@@ -3235,8 +3235,8 @@ def stream_scene_from_aws(
     geotiff_file,
     aws_session: rasterio.session.AWSSession | None = None,
     metadata_only: bool = False,
-    stream_out_shape: tuple | None = None,
-    stream_reshape_method: Resampling = Resampling.bilinear,
+    scale_factor: float | list[float] | None = None,
+    reshape_method: Resampling = Resampling.bilinear,
 ):
     """Streams a GeoTIFF scene from AWS S3 using rasterio.
 
@@ -3248,10 +3248,9 @@ def stream_scene_from_aws(
         AWS session for authentication, by default None
     metadata_only : bool, optional
         Only retrieve metadata without reading the data, by default False
-    stream_out_shape: tuple | None, optional
-        Desired output shape for the streamed data (h, w), by default None
-        `scale_factor` resamples the streamed data, even if the streamed data already is reshaped.
-    stream_reshape_method: Resampling = Resampling.bilinear
+    scale_factor: float | list[float] | None, optional
+        Desired output scale factor for the streamed data, (h, w) if list, by default None
+    reshape_method: Resampling = Resampling.bilinear
         Resampling method used for reshaping the streamed data.
     """
 
@@ -3261,10 +3260,14 @@ def stream_scene_from_aws(
             bounds = geo_fp.bounds
             crs = geo_fp.crs
             if not metadata_only:
-                if stream_out_shape is not None:
+                if scale_factor is not None:
+                    stream_out_shape = (
+                        int(profile["height"] * scale_factor[0]),
+                        int(profile["width"] * scale_factor[1]),
+                    )
                     scene = geo_fp.read(
                         out_shape=(geo_fp.count, *stream_out_shape),
-                        resampling=stream_reshape_method,
+                        resampling=reshape_method,
                     )
                     transform = geo_fp.transform * geo_fp.transform.scale(
                         (geo_fp.width / stream_out_shape[1]),
@@ -3282,6 +3285,8 @@ def stream_scene_from_aws(
                 scene = None
         return scene, profile, bounds, crs
 
+    if type(scale_factor) == float:
+        scale_factor = [scale_factor] * 2
     scene = np.zeros(0)
     if aws_session is not None:
         with rasterio.Env(aws_session):
@@ -4344,7 +4349,7 @@ def download_and_process_series(
     filename_suffix: str = "PROC",
     download_only: bool = False,
     composite_band_indexes: list[int] | None = None,
-    scale_factor: float = 0.2,
+    scale_factor: float | list[float] = 0.2,
     scene_name_map: Callable | None = None,
     preserve_depth: bool = False,
     min_max_scaling: bool = True,
@@ -4352,7 +4357,7 @@ def download_and_process_series(
     three_channel: bool = False,
     remove_nans: bool = False,
     force_reprocess: bool = False,
-    stream_out_shape: tuple | None = None,
+    stream_out_scale_factor: float | list[float] | None = None,
     stream_reshape_method: Resampling = Resampling.bilinear,
 ) -> list:
     """Downloads and processes a series of scenes from AWS S3, creating composite images from the specified bands.
@@ -4397,7 +4402,7 @@ def download_and_process_series(
         If True, only downloads the scenes without processing them, by default False
     composite_band_indexes : list[int] | None, optional
         List of indexes for the bands to be used in the composite image, by default None
-    scale_factor : float, optional
+    scale_factor : float | list[float], optional
         Scale factor for downsampling the processed scenes, by default 0.2
     scene_name_map : Callable | None, optional
         Function to map scene names to a specific format, by default None
@@ -4413,8 +4418,8 @@ def download_and_process_series(
         If True, removes NaN values from the processed images, by default False
     force_reprocess : bool, optional
         If True, forces reprocessing of existing files, by default False
-    stream_out_shape: tuple | None, optional
-        Desired output shape for the streamed data (h, w), by default None
+    stream_out_scale_factor: float | list[float] | None, optional
+        Desired output scale factor for the streamed data (h, w) if list, by default None
         `scale_factor` resamples the streamed data, even if the streamed data already is reshaped.
     stream_reshape_method: Resampling = Resampling.bilinear
         Resampling method used for reshaping the streamed data.
@@ -4520,8 +4525,8 @@ def download_and_process_series(
                     band_img, band_meta = stream_scene_from_aws(
                         band_url,
                         aws_session,
-                        stream_out_shape=stream_out_shape,
-                        stream_reshape_method=stream_reshape_method,
+                        scale_factor=stream_out_scale_factor,
+                        reshape_method=stream_reshape_method,
                     )
                     with rasterio.open(band_output, "w", **band_meta["profile"]) as ds:
                         for i in range(band_meta["profile"]["count"]):
