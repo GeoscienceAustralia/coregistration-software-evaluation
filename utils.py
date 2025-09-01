@@ -3237,6 +3237,7 @@ def stream_scene_from_aws(
     metadata_only: bool = False,
     scale_factor: float | list[float] | None = None,
     reshape_method: Resampling = Resampling.bilinear,
+    round_transform: bool = True,
 ):
     """Streams a GeoTIFF scene from AWS S3 using rasterio.
 
@@ -3252,6 +3253,8 @@ def stream_scene_from_aws(
         Desired output scale factor for the streamed data, (h, w) if list, by default None
     reshape_method: Resampling = Resampling.bilinear
         Resampling method used for reshaping the streamed data.
+    round_transform: bool = True
+        If True, round the transform parameters to the nearest integer.
     """
 
     def get_data():
@@ -3273,6 +3276,15 @@ def stream_scene_from_aws(
                         (geo_fp.width / stream_out_shape[1]),
                         (geo_fp.height / stream_out_shape[0]),
                     )
+                    if round_transform:
+                        transform = rasterio.Affine(
+                            np.round(transform.a).tolist(),
+                            transform.b,
+                            transform.c,
+                            transform.d,
+                            np.round(transform.e).tolist(),
+                            transform.f,
+                        )
                     profile.update(
                         transform=transform,
                         width=stream_out_shape[1],
@@ -4361,6 +4373,7 @@ def download_and_process_series(
     force_reprocess: bool = False,
     stream_out_scale_factor: float | list[float] | None = None,
     stream_reshape_method: Resampling = Resampling.bilinear,
+    stream_round_transform: bool = True,
 ) -> list:
     """Downloads and processes a series of scenes from AWS S3, creating composite images from the specified bands.
 
@@ -4425,6 +4438,8 @@ def download_and_process_series(
         `scale_factor` resamples the streamed data, even if the streamed data already is reshaped.
     stream_reshape_method: Resampling = Resampling.bilinear
         Resampling method used for reshaping the streamed data.
+    stream_round_transform: bool = True
+        Rounds the transform of the streamed data to the nearest integer.
 
     Returns
     -------
@@ -4529,6 +4544,7 @@ def download_and_process_series(
                         aws_session,
                         scale_factor=stream_out_scale_factor,
                         reshape_method=stream_reshape_method,
+                        round_transform=stream_round_transform,
                     )
                     with rasterio.open(band_output, "w", **band_meta["profile"]) as ds:
                         for i in range(band_meta["profile"]["count"]):
