@@ -4123,7 +4123,7 @@ def edge_detector(
 
 
 def process_existing_outputs(
-    existing_files: list[str],
+    existing_files: list[str] | list[list[str]],
     output_dir: str,
     edge_detection: bool = False,
     edge_detection_mode: Literal["sobel", "laplacian", "canny"] = "sobel",
@@ -4223,8 +4223,10 @@ def process_existing_outputs(
                 )
             )
             if len(suffix_list) > 0:
-                filename_suffix = f"{suffix_list[0]}_{filename_suffix}"
-            proc_file = f"{os.path.join(process_dir, os.path.basename(originals_dir))}_{filename_suffix}{ext}"
+                suffix_to_add = f"{suffix_list[0]}_{filename_suffix}"
+            else:
+                suffix_to_add = filename_suffix
+        proc_file = f"{os.path.join(process_dir, os.path.basename(originals_dir))}_{suffix_to_add}{ext}"
         proc_file_ds = os.path.join(process_ds_dir, os.path.basename(proc_file))
         proc_files.append(proc_file)
         proc_files_ds.append(proc_file_ds)
