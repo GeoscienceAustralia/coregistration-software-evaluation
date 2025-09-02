@@ -2860,15 +2860,11 @@ def find_scenes_dict(
             temp_dict_time[t] = temp_list
 
         if min_scenes_per_id is not None:
-            if (
-                sum(
-                    [
-                        len(sc)
-                        for sc in [temp_dict_time[kk] for kk in temp_dict_time.keys()]
-                    ]
-                )
-                < min_scenes_per_id
-            ):
+            num_scenes_in_pr = sum(
+                [len(sc) for sc in [temp_dict_time[kk] for kk in temp_dict_time.keys()]]
+            )
+            if num_scenes_in_pr < min_scenes_per_id:
+                # print(pr, "skipped for not enough scenes", num_scenes_in_pr)
                 continue
         scene_dict_pr_time[pr] = temp_dict_time
         scene_list.extend(scene_list_temp)
