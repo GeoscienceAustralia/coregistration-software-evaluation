@@ -2609,6 +2609,7 @@ def query_stac_server(
     use_pystac: bool = False,
     return_pystac_items: bool = False,
     max_cloud_cover: float | None = None,
+    id_filter: str | None = None,
 ) -> list | pystac.ItemCollection:
     """
     Queries the stac-server (STAC) backend.
@@ -2629,21 +2630,27 @@ def query_stac_server(
         If True, returns pystac items instead of raw features, by default False.
     max_cloud_cover : float, optional
         Maximum cloud cover percentage to filter items, by default None
+    id_filter: str | None = None,
+        Filters items without the provided pattern out.
     """
 
     if use_pystac:
         client = Client.open(server_url)
         search = client.search(**query)
         items = search.item_collection()
+
+        items_list = items
         if max_cloud_cover is not None:
             print("Filtering items by cloud cover...")
             items_list = [
                 item
-                for item in items
+                for item in items_list
                 if item.properties["eo:cloud_cover"] < max_cloud_cover
             ]
-        else:
-            items_list = items
+        if id_filter is not None:
+            print("Filtering items by id filter...")
+            items_list = [item for item in items_list if id_filter in item.id]
+
         items = pystac.ItemCollection(items_list)
         if return_pystac_items:
             return items
@@ -2697,6 +2704,7 @@ def find_scenes_dict(
     remove_duplicate_times: bool = True,
     duplicate_idx: int = 0,
     min_scenes_per_id: int | None = None,
+    id_filter: str | None = None,
 ) -> tuple:
     """Generates a dictionary of scenes from the provided features.
 
@@ -2717,6 +2725,8 @@ def find_scenes_dict(
         Index of the duplicate time to keep, by default 0
     min_scenes_per_id : int | None, optional
         Minimum number of scenes required per ID, by default None
+    id_filter: str | None = None,
+        Filters items without the provided pattern out.
 
     Returns
     -------
@@ -2736,6 +2746,9 @@ def find_scenes_dict(
         if "title" in feature["properties"]:
             id = feature["properties"]["title"]
             use_title = True
+
+        if (id_filter is not None) and (id_filter not in id):
+            continue
 
         if "landsat:scene_id" in feature["properties"]:
             scene_id = feature["properties"]["landsat:scene_id"]
