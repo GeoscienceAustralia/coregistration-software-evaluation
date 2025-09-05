@@ -5013,6 +5013,9 @@ def create_dataset_from_files(
     remove_val: float | int | None = 0,
     chunks: dict = {},
     scale_factor: float | None = None,
+    bbox: list | None = None,
+    bbox_crs: int | None = None,
+    swap_bbox_lat_lon: bool = True,
 ) -> xr.Dataset:
     """Create an xarray dataset from the list of files and times.
 
@@ -5033,12 +5036,28 @@ def create_dataset_from_files(
         Dictionary specifying the chunk sizes for the dataset. If None, no chunking is applied.
     scale_factor : float | None, optional
         Factor by which to scale the dataset. If None, no scaling is applied.
+    bbox : list | None, optional
+        Bounding box to which to clip the dataset in the form [minx, miny, maxx, maxy]. If None, no clipping is applied.
+    bbox_crs : int | None, optional
+        CRS of the bounding box, required if bbox is provided. If None, it is assumed to be the same as the dataset CRS.
+    swap_bbox_lat_lon : bool, optional
+        Whether to swap the latitude and longitude values in the bounding box. Default is True.
 
     Returns
     -------
     xr.Dataset
         The created xarray dataset.
     """
+
+    if bbox is not None and crs is None:
+        raise ValueError("CRS must be provided if bbox is provided.")
+
+    if bbox is not None:
+        if swap_bbox_lat_lon:
+            bbox = [bbox[1], bbox[0], bbox[3], bbox[2]]
+        bbox = reproject_bounds(
+            [bbox], source_crs=bbox_crs if bbox_crs is not None else crs, dest_crs=crs
+        )[0]
 
     if times is None:
         times = [str(i) for i in range(len(paths))]
@@ -5103,6 +5122,12 @@ def create_dataset_from_files(
 
     if scale_factor is not None:
         ds = resample_xarray_dataset(ds, scale_factor).chunk(chunks=chunks)
+
+    if bbox is not None:
+        try:
+            ds = ds.rio.clip_box(*bbox)
+        except Exception as e:
+            print(f"Error clipping dataset: {e}")
 
     if remove_val is not None:
         print(f"Removing values equal to {remove_val} from the dataset.")
