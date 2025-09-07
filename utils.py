@@ -4934,11 +4934,33 @@ def reproject_bounds(
     bounds: list[list | rasterio.coords.BoundingBox],
     source_crs: str | int | list[str] | list[int],
     dest_crs: str | int = "EPSG:4326",
-    inverse_xy: bool = False,
+    always_xy: bool = True,
     rounding_precision: int | None = None,
 ) -> list[list]:
     """
-    Reprojects bounding boxes to the given `crs.
+    Reprojects list of bounding boxes to the given `crs`.
+    Parameters
+    ----------
+    bounds : list[list | rasterio.coords.BoundingBox]
+        List of bounding boxes to reproject. Each bounding box can be a list in the form
+        [minx, miny, maxx, maxy] or a rasterio.coords.BoundingBox object.
+    source_crs : str | int | list[str] | list[int]
+        Source coordinate reference system(s). Can be a single CRS (str or int) or a list of CRSs.
+    dest_crs : str | int, optional
+        Destination coordinate reference system. Default is "EPSG:4326".
+    always_xy : bool, optional
+        If True, the transformer will always expect and return coordinates in (x, y) order.
+        Default is True.
+    rounding_precision : int | None, optional
+        If provided, the coordinates will be rounded to this many decimal places. Default is None.
+    Returns
+    -------
+    list[list]
+        List of reprojected bounding boxes in the form [minx, miny, maxx, maxy].
+    Notes
+    -----
+    This function uses the `pyproj` library for coordinate transformations and `rasterio`
+    for handling bounding boxes.
     """
 
     if isinstance(source_crs, str) or isinstance(source_crs, int):
@@ -4955,7 +4977,7 @@ def reproject_bounds(
 
     new_bounds = []
     for c, b in zip(source_crs, bounds):
-        transformer = Transformer.from_crs(c, dest_crs)
+        transformer = Transformer.from_crs(c, dest_crs, always_xy=always_xy)
         if isinstance(b, rasterio.coords.BoundingBox):
             xmin = b.left
             xmax = b.right
@@ -4975,10 +4997,7 @@ def reproject_bounds(
             new_x = [round(coord, rounding_precision) for coord in new_x]
             new_y = [round(coord, rounding_precision) for coord in new_y]
 
-        if inverse_xy:
-            new_bounds.append([min(new_y), min(new_x), max(new_y), max(new_x)])
-        else:
-            new_bounds.append([min(new_x), min(new_y), max(new_x), max(new_y)])
+        new_bounds.append([min(new_x), min(new_y), max(new_x), max(new_y)])
 
     return new_bounds
 
