@@ -30,8 +30,7 @@ import utm as utm_convrter
 import boto3
 from pystac_client import Client
 from osgeo import ogr
-from shapely import ops, from_wkt
-from shapely import Polygon, box
+from shapely import ops, from_wkt, to_geojson, Polygon, box
 from pathlib import Path
 from typing import Literal
 from datetime import datetime
@@ -49,6 +48,7 @@ from typing import Callable
 import warnings
 from sklearn.cluster import DBSCAN
 import multiprocess as mp
+from geojson import loads as gloads
 
 
 dbscan = DBSCAN(min_samples=2, eps=0.01)
@@ -4930,6 +4930,47 @@ def combine_comparison_results(
     return out_df
 
 
+def reproject_box_to_geojson(
+    bbox: list,
+    src_crs: str | int = "EPSG:4326",
+    dst_crs: str | int = "EPSG:3031",
+    always_xy: bool = True,
+):
+    """
+    Reprojects a bounding box from the source CRS to the destination CRS and returns it as a GeoJSON Polygon.
+
+    Parameters
+    ----------
+    bbox : list
+        Bounding box in the form [minx, miny, maxx, maxy].
+    src_crs : str | int, optional
+        Source coordinate reference system. Default is "EPSG:4326".
+    dst_crs : str | int, optional
+        Destination coordinate reference system. Default is "EPSG:3031".
+    always_xy : bool, optional
+        If True, the transformer will always expect and return coordinates in (x, y) order.
+        Default is True.
+    Returns
+    -------
+    dict
+        GeoJSON representation of the reprojected bounding box.
+    """
+
+    src_crs = str(src_crs)
+    dst_crs = str(dst_crs)
+
+    if "EPSG:" not in src_crs:
+        src_crs = f"EPSG:{src_crs}"
+    if "EPSG:" not in dst_crs:
+        dst_crs = f"EPSG:{dst_crs}"
+
+    transformer = Transformer.from_crs(src_crs, dst_crs, always_xy=always_xy)
+    xx, yy = box(*bbox).exterior.coords.xy
+    bbs = transformer.transform(xx, yy)
+    bbsp = gloads(to_geojson(Polygon(list(zip(bbs[0], bbs[1])))))
+    return bbsp
+
+
 def reproject_bounds(
     bounds: list[list | rasterio.coords.BoundingBox],
     source_crs: str | int | list[str] | list[int],
@@ -4939,6 +4980,7 @@ def reproject_bounds(
 ) -> list[list]:
     """
     Reprojects list of bounding boxes to the given `crs`.
+
     Parameters
     ----------
     bounds : list[list | rasterio.coords.BoundingBox]
@@ -5034,7 +5076,7 @@ def create_dataset_from_files(
     scale_factor: float | None = None,
     bbox: list | None = None,
     bbox_crs: int | None = None,
-    swap_bbox_lat_lon: bool = True,
+    use_geometry: bool = False,
 ) -> xr.Dataset:
     """Create an xarray dataset from the list of files and times.
 
@@ -5059,8 +5101,8 @@ def create_dataset_from_files(
         Bounding box to which to clip the dataset in the form [minx, miny, maxx, maxy]. If None, no clipping is applied.
     bbox_crs : int | None, optional
         CRS of the bounding box, required if bbox is provided. If None, it is assumed to be the same as the dataset CRS.
-    swap_bbox_lat_lon : bool, optional
-        Whether to swap the latitude and longitude values in the bounding box. Default is True.
+    use_geometry : bool, optional
+        Whether to use the geometry for clipping. Default is False.
 
     Returns
     -------
@@ -5072,11 +5114,20 @@ def create_dataset_from_files(
         raise ValueError("CRS must be provided if bbox is provided.")
 
     if bbox is not None:
-        if swap_bbox_lat_lon:
-            bbox = [bbox[1], bbox[0], bbox[3], bbox[2]]
-        bbox = reproject_bounds(
-            [bbox], source_crs=bbox_crs if bbox_crs is not None else crs, dest_crs=crs
-        )[0]
+        if use_geometry:
+            bbox = [
+                reproject_box_to_geojson(
+                    bbox,
+                    src_crs=bbox_crs if bbox_crs is not None else crs,
+                    dst_crs=crs,
+                )
+            ]
+        else:
+            bbox = reproject_bounds(
+                [bbox],
+                source_crs=bbox_crs if bbox_crs is not None else crs,
+                dest_crs=crs,
+            )[0]
 
     if times is None:
         times = [str(i) for i in range(len(paths))]
@@ -5144,7 +5195,12 @@ def create_dataset_from_files(
 
     if bbox is not None:
         try:
-            ds = ds.rio.clip_box(*bbox)
+            if use_geometry:
+                print("Clipping dataset to the provided geometry.")
+                ds = ds.rio.clip(bbox, all_touched=True)
+            else:
+                print("Clipping dataset to the provided bounding box.")
+                ds = ds.rio.clip_box(*bbox)
         except Exception as e:
             print(f"Error clipping dataset: {e}")
 
