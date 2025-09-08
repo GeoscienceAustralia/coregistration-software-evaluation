@@ -49,6 +49,7 @@ import warnings
 from sklearn.cluster import DBSCAN
 import multiprocess as mp
 from geojson import loads as gloads
+from dask import optimize
 
 
 dbscan = DBSCAN(min_samples=2, eps=0.01)
@@ -5077,6 +5078,7 @@ def create_dataset_from_files(
     bbox: list | None = None,
     bbox_crs: int | None = None,
     use_geometry: bool = False,
+    optimize_dataset: bool = False,
 ) -> xr.Dataset:
     """Create an xarray dataset from the list of files and times.
 
@@ -5103,6 +5105,8 @@ def create_dataset_from_files(
         CRS of the bounding box, required if bbox is provided. If None, it is assumed to be the same as the dataset CRS.
     use_geometry : bool, optional
         Whether to use the geometry for clipping. Default is False.
+    optimize_dataset : bool, optional
+        Whether to optimize the dataset by removing variables and attributes that are not needed. Default is False.
 
     Returns
     -------
@@ -5207,4 +5211,7 @@ def create_dataset_from_files(
     if remove_val is not None:
         print(f"Removing values equal to {remove_val} from the dataset.")
         ds = ds.where(ds > remove_val)
+
+    if optimize_dataset:
+        ds = optimize(ds)[0]
     return ds
