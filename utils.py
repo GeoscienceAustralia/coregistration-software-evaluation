@@ -1207,12 +1207,13 @@ def make_mosaic(
             for warp in warps:
                 warp[universal_mask] = 0
 
-    if resolution_adjustment:
-        shutil.rmtree("temp/res_adjustment", ignore_errors=True)
     if os.path.exists("temp/reproject"):
         shutil.rmtree("temp/reproject", ignore_errors=True)
 
     mosaic_profile = rasterio.open(dataset_paths[0]).profile
+    if resolution_adjustment:
+        shutil.rmtree("temp/res_adjustment", ignore_errors=True)
+        
     mosaic_profile["height"] = new_shape[0]
     mosaic_profile["width"] = new_shape[1]
     mosaic_profile["count"] = 3
