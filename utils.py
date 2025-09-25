@@ -1213,7 +1213,7 @@ def make_mosaic(
     mosaic_profile = rasterio.open(dataset_paths[0]).profile
     if resolution_adjustment:
         shutil.rmtree("temp/res_adjustment", ignore_errors=True)
-        
+
     mosaic_profile["height"] = new_shape[0]
     mosaic_profile["width"] = new_shape[1]
     mosaic_profile["count"] = 3
@@ -3273,39 +3273,43 @@ def stream_scene_from_aws(
             profile = geo_fp.profile
             bounds = geo_fp.bounds
             crs = geo_fp.crs
-            if not metadata_only:
-                if scale_factor is not None:
-                    stream_out_shape = (
-                        int(profile["height"] * scale_factor[0]),
-                        int(profile["width"] * scale_factor[1]),
+            dtype = profile["dtype"]
+            if scale_factor is not None:
+                stream_out_shape = (
+                    int(profile["height"] * scale_factor[0]),
+                    int(profile["width"] * scale_factor[1]),
+                )
+                transform = geo_fp.transform * geo_fp.transform.scale(
+                    (geo_fp.width / stream_out_shape[1]),
+                    (geo_fp.height / stream_out_shape[0]),
+                )
+                if round_transform:
+                    transform = rasterio.Affine(
+                        np.round(transform.a).tolist(),
+                        transform.b,
+                        transform.c,
+                        transform.d,
+                        np.round(transform.e).tolist(),
+                        transform.f,
                     )
+                profile.update(
+                    transform=transform,
+                    width=stream_out_shape[1],
+                    height=stream_out_shape[0],
+                    dtype=dtype,
+                )
+
+            if metadata_only:
+                scene = None
+            else:
+                if scale_factor is None:
+                    scene = geo_fp.read()
+                else:
                     scene = geo_fp.read(
                         out_shape=(geo_fp.count, *stream_out_shape),
                         resampling=reshape_method,
                     )
-                    transform = geo_fp.transform * geo_fp.transform.scale(
-                        (geo_fp.width / stream_out_shape[1]),
-                        (geo_fp.height / stream_out_shape[0]),
-                    )
-                    if round_transform:
-                        transform = rasterio.Affine(
-                            np.round(transform.a).tolist(),
-                            transform.b,
-                            transform.c,
-                            transform.d,
-                            np.round(transform.e).tolist(),
-                            transform.f,
-                        )
-                    profile.update(
-                        transform=transform,
-                        width=stream_out_shape[1],
-                        height=stream_out_shape[0],
-                        dtype=scene.dtype,
-                    )
-                else:
-                    scene = geo_fp.read()
-            else:
-                scene = None
+
         return scene, profile, bounds, crs
 
     if type(scale_factor) == float:
