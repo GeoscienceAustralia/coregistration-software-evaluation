@@ -25,3 +25,5 @@ multiprocess
 geom_median
 dask[distributed]
 ipykernel
+rich-click
+karios @ git+https://github.com/telespazio-tim/karios.git@main

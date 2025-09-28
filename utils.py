@@ -3846,7 +3846,7 @@ def karios(
     ref_image: str,
     tgt_images: list[str],
     output_dir: str,
-    karios_executable: str,
+    karios_executable: str = "karios",
 ) -> tuple:
     """Runs Karios coregistration on the provided reference and target images.
 
@@ -3859,7 +3859,7 @@ def karios(
     output_dir : str
         Output directory where the aligned images will be saved.
     karios_executable : str
-        Path to the Karios executable.
+        Path to the Karios executable. Default is 'karios'.
 
     Returns
     -------
@@ -3900,7 +3900,7 @@ def karios(
         os.remove(log_file)
     for i, tgt_image in enumerate(tgt_images_copy):
         try:
-            cmd = f"python {karios_executable} --out {output_dir} --log-file-path {log_file} {tgt_image} {ref_image}"
+            cmd = f"{karios_executable} process {tgt_image} {ref_image} --out {output_dir} --log-file-path {log_file} "
             print(f"Running {cmd}")
             run(shlex.split(cmd))
         except Exception as e:
