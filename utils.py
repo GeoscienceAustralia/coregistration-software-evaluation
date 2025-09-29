@@ -44,7 +44,7 @@ import PIL
 import rioxarray as rxr
 import xarray as xr
 import pystac
-from typing import Callable
+from typing import Callable, Any
 import warnings
 from sklearn.cluster import DBSCAN
 import multiprocess as mp
@@ -626,7 +626,7 @@ def reproject_tif(
     dst_crs: str,
     resampling: Resampling = Resampling.bilinear,
     verbose: bool = True,
-):
+) -> None:
     """Reprojects a raster file to a new coordinate reference system (CRS) and saves it to a new file.
 
     Parameters
@@ -667,9 +667,10 @@ def reproject_tif(
                     dst_crs=dst_crs,
                     resampling=resampling,
                 )
+    return None
 
 
-flip_img = lambda img: np.flipud(np.rot90(img.T))
+flip_img = lambda img: np.moveaxis(img, 0, -1)
 
 
 def adjust_resolutions(
@@ -1279,7 +1280,7 @@ def make_difference_gif(
     thickness: int = 3,
     color: tuple = (255, 0, 0),
     origin: tuple = (5, 50),
-):
+) -> None:
     """Makes a GIF from a list of images with titles and optional scaling.
 
     Parameters
@@ -1373,6 +1374,7 @@ def make_difference_gif(
 
     imageio.mimwrite(output_path, images, loop=0, fps=fps)
     shutil.rmtree("temp", ignore_errors=True)
+    return None
 
 
 def shift_targets_to_origin(
@@ -1784,7 +1786,25 @@ def warp_affine_dataset(
     return warped_img
 
 
-def find_cells(img, points, window_size, invert_points=False):
+def find_cells(
+    img: np.ndarray, points: np.ndarray, window_size: tuple, invert_points: bool = False
+) -> list[np.ndarray]:
+    """Finds grid cells around the given points in the image.
+    Parameters
+    ----------
+    img : np.ndarray
+        The input image.
+    points : np.ndarray
+        The points around which to find the grid cells.
+    window_size : tuple
+        The size of the grid cells.
+    invert_points : bool, optional
+        If True, inverts the points to (y, x) format, by default False
+    Returns
+    -------
+    list
+        List of grid cells as numpy arrays.
+    """
     if invert_points:
         points = np.column_stack([points[:, 1], points[:, 0]])
     h = img.shape[0]
@@ -3243,18 +3263,19 @@ def read_kml_polygon(
 
 
 def stream_scene_from_aws(
-    geotiff_file,
+    geotiff_file: str | Path,
     aws_session: rasterio.session.AWSSession | None = None,
     metadata_only: bool = False,
     scale_factor: float | list[float] | None = None,
+    resolution: float | list[float] | None = None,
     reshape_method: Resampling = Resampling.bilinear,
     round_transform: bool = True,
-):
+) -> tuple[np.ndarray | None, dict[str, Any]]:
     """Streams a GeoTIFF scene from AWS S3 using rasterio.
 
     Parameters
     ----------
-    geotiff_file : _type_
+    geotiff_file : str | Path
         AWS S3 path to the GeoTIFF file, e.g. "s3://bucket/path/to/file.tif"
     aws_session : rasterio.session.AWSSession | None, optional
         AWS session for authentication, by default None
@@ -3262,10 +3283,12 @@ def stream_scene_from_aws(
         Only retrieve metadata without reading the data, by default False
     scale_factor: float | list[float] | None, optional
         Desired output scale factor for the streamed data, (h, w) if list, by default None
-    reshape_method: Resampling = Resampling.bilinear
-        Resampling method used for reshaping the streamed data.
-    round_transform: bool = True
-        If True, round the transform parameters to the nearest integer.
+    resolution: float | list[float] | None, optional
+        Desired output resolution in raster units for the streamed data, (h, w) if list, overrides `scale_factor`, by default None
+    reshape_method: Resampling, optional
+        Resampling method used for reshaping the streamed data, by default Resampling.bilinear
+    round_transform: bool, optional
+        If True, round the transform parameters to the nearest integer, by default True
     """
 
     def get_data():
@@ -3274,6 +3297,11 @@ def stream_scene_from_aws(
             bounds = geo_fp.bounds
             crs = geo_fp.crs
             dtype = profile["dtype"]
+            if resolution is not None:
+                scale_factor = [
+                    abs(geo_fp.transform.e) / resolution[0],
+                    abs(geo_fp.transform.a) / resolution[1],
+                ]
             if scale_factor is not None:
                 stream_out_shape = (
                     int(profile["height"] * scale_factor[0]),
@@ -3312,6 +3340,8 @@ def stream_scene_from_aws(
 
         return scene, profile, bounds, crs
 
+    if type(resolution) == float:
+        resolution = [resolution] * 2
     if type(scale_factor) == float:
         scale_factor = [scale_factor] * 2
     scene = np.zeros(0)
