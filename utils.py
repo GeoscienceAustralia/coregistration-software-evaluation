@@ -3291,27 +3291,31 @@ def stream_scene_from_aws(
         If True, round the transform parameters to the nearest integer, by default True
     """
 
-    def get_data():
-        with rasterio.open(geotiff_file) as geo_fp:
-            profile = geo_fp.profile
-            bounds = geo_fp.bounds
-            crs = geo_fp.crs
-            dtype = profile["dtype"]
-            if resolution is not None:
-                scale_factor = [
-                    abs(geo_fp.transform.e) / resolution[0],
-                    abs(geo_fp.transform.a) / resolution[1],
+    def get_data(gtif, sclf, res, meta_only, roundtrans):
+        with rasterio.open(gtif) as geo_fp:
+            prof = geo_fp.profile
+            bnds = geo_fp.bounds
+            gcrs = geo_fp.crs
+            dtype = prof["dtype"]
+            if res is not None:
+                if type(res) == float:
+                    res = [res] * 2
+                sclf = [
+                    abs(geo_fp.transform.e) / res[0],
+                    abs(geo_fp.transform.a) / res[1],
                 ]
-            if scale_factor is not None:
+            if sclf is not None:
+                if type(sclf) == float:
+                    sclf = [sclf] * 2
                 stream_out_shape = (
-                    int(profile["height"] * scale_factor[0]),
-                    int(profile["width"] * scale_factor[1]),
+                    int(prof["height"] * sclf[0]),
+                    int(prof["width"] * sclf[1]),
                 )
                 transform = geo_fp.transform * geo_fp.transform.scale(
                     (geo_fp.width / stream_out_shape[1]),
                     (geo_fp.height / stream_out_shape[0]),
                 )
-                if round_transform:
+                if roundtrans:
                     transform = rasterio.Affine(
                         np.round(transform.a).tolist(),
                         transform.b,
@@ -3320,36 +3324,35 @@ def stream_scene_from_aws(
                         np.round(transform.e).tolist(),
                         transform.f,
                     )
-                profile.update(
+                prof.update(
                     transform=transform,
                     width=stream_out_shape[1],
                     height=stream_out_shape[0],
                     dtype=dtype,
                 )
 
-            if metadata_only:
-                scene = None
+            if meta_only:
+                scn = None
             else:
-                if scale_factor is None:
-                    scene = geo_fp.read()
+                if sclf is None:
+                    scn = geo_fp.read()
                 else:
-                    scene = geo_fp.read(
+                    scn = geo_fp.read(
                         out_shape=(geo_fp.count, *stream_out_shape),
                         resampling=reshape_method,
                     )
 
-        return scene, profile, bounds, crs
+        return scn, prof, bnds, gcrs
 
-    if type(resolution) == float:
-        resolution = [resolution] * 2
-    if type(scale_factor) == float:
-        scale_factor = [scale_factor] * 2
-    scene = np.zeros(0)
     if aws_session is not None:
         with rasterio.Env(aws_session):
-            scene, profile, bounds, crs = get_data()
+            scene, profile, bounds, crs = get_data(
+                geotiff_file, scale_factor, resolution, metadata_only, round_transform
+            )
     else:
-        scene, profile, bounds, crs = get_data()
+        scene, profile, bounds, crs = get_data(
+            geotiff_file, scale_factor, resolution, metadata_only, round_transform
+        )
 
     return scene, {"profile": profile, "bounds": bounds, "crs": crs}
 
