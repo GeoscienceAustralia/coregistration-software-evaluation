@@ -3262,7 +3262,7 @@ def read_kml_polygon(
     return coords, bbox
 
 
-def stream_scene_from_aws(
+def stream_scene(
     geotiff_file: str | Path,
     aws_session: rasterio.session.AWSSession | None = None,
     metadata_only: bool = False,
@@ -3271,14 +3271,14 @@ def stream_scene_from_aws(
     reshape_method: Resampling = Resampling.bilinear,
     round_transform: bool = True,
 ) -> tuple[np.ndarray | None, dict[str, Any]]:
-    """Streams a GeoTIFF scene from AWS S3 using rasterio.
+    """Streams a GeoTIFF scene from cloud storage using rasterio.
 
     Parameters
     ----------
     geotiff_file : str | Path
-        AWS S3 path to the GeoTIFF file, e.g. "s3://bucket/path/to/file.tif"
+        Cloud storage path to the GeoTIFF file, e.g. "s3://bucket/path/to/file.tif"
     aws_session : rasterio.session.AWSSession | None, optional
-        AWS session for authentication, by default None
+        AWS session for authentication if downloading from S3, by default None
     metadata_only : bool, optional
         Only retrieve metadata without reading the data, by default False
     scale_factor: float | list[float] | None, optional
