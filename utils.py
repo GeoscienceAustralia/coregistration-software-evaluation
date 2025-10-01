@@ -4587,7 +4587,7 @@ def download_and_process_series(
                 if os.path.isfile(band_output):
                     print(f"Original file for {band} band already exists, skipping.")
                 else:
-                    band_img, band_meta = stream_scene_from_aws(
+                    band_img, band_meta = stream_scene(
                         band_url,
                         aws_session,
                         scale_factor=stream_out_scale_factor,
@@ -5111,6 +5111,8 @@ def create_dataset_from_files(
     crs: int | None = None,
     bands: list[str] | None = None,
     remove_val: float | int | None = 0,
+    band_scale: float | None = 1.0,
+    band_offset: float | None = 0.0,
     chunks: dict = {},
     scale_factor: float | None = None,
     bbox: list | None = None,
@@ -5133,6 +5135,10 @@ def create_dataset_from_files(
     remove_val : float | int | None, optional
         Value to remove from the dataset. If None, no values are removed. Default is 0.
         If a float or int, all values equal to this will be set to NaN.
+    band_scale : float | None, optional
+        Scale factor to apply to the dataset values. If None, no scaling is applied. Default is 1.0.
+    band_offset : float | None, optional
+        Offset to apply to the dataset values. If None, no offset is applied. Default is 0.0.
     chunks : dict, optional
         Dictionary specifying the chunk sizes for the dataset. If None, no chunking is applied.
     scale_factor : float | None, optional
@@ -5246,6 +5252,7 @@ def create_dataset_from_files(
         except Exception as e:
             print(f"Error clipping dataset: {e}")
 
+    ds[bands] = ds[bands] * band_scale + band_offset
     if remove_val is not None:
         print(f"Removing values equal to {remove_val} from the dataset.")
         ds = ds.where(ds > remove_val)
