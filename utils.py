@@ -50,6 +50,7 @@ from sklearn.cluster import DBSCAN
 import multiprocess as mp
 from geojson import loads as gloads
 from dask import optimize
+import copy
 
 
 dbscan = DBSCAN(min_samples=2, eps=0.01)
@@ -3454,15 +3455,16 @@ def kml_to_poly(
 
 
 def get_pair_dict(
-    data: dict,
+    data_dict: dict,
     time_distance: str = Literal["closest", "farthest"],
     reference_month: str = "01",
+    force_ref_id: str | None = None,
 ) -> list:
     """Finds the closest or farthest member of the given scene dictionary in time in it to a given reference scence found automatically in the data using the reference month.
 
     Parameters
     ----------
-    data : dict
+    data_dict : dict
         Scenes dictionary
     reference_id : str
         Id of the reference scenes in the scene dictionary
@@ -3470,6 +3472,8 @@ def get_pair_dict(
         Distance option, by default Literal["closest", "farthest"]
     prefered_month: str, optional
         Prefered month in the scenes dict to retrieve data for the reference scene, by default 01
+    force_ref_id : str | None, optional
+        Force the reference id to be the provided string, by default None
 
     Returns
     -------
@@ -3477,25 +3481,47 @@ def get_pair_dict(
         list of reference data and its closest/farthest target
     """
 
-    data = data.copy()
+    data = copy.deepcopy(data_dict)
 
     if time_distance not in ["closest", "farthest"]:
         raise ValueError("time distance options are only closest or farthest")
 
+    if force_ref_id is not None:
+        print("Forcing reference id:", force_ref_id)
+        ref_data = {}
+        for date_key in list(data.keys()):
+            scene_dicts = data[date_key]
+            scene_ids = [s["scene_name"] for s in scene_dicts]
+            if force_ref_id not in scene_ids:
+                continue
+            else:
+                print("Using reference id:", force_ref_id)
+                force_ref_idx = scene_ids.index(force_ref_id)
+                ref_data = [data[date_key][force_ref_idx]]
+                reference_date_obj = datetime.strptime(date_key, "%Y%m")
+                del data[date_key][force_ref_idx]
+                break
+        assert (
+            len(ref_data) == 1
+        ), f"Reference data not found for force_ref_id: {force_ref_id}"
+
     scene_dates = sorted(list(data.keys()))
-    try:
-        reference_date_idx = [
-            reference_month in date[-2:] for date in scene_dates
-        ].index(True)
-        reference_date = scene_dates[reference_date_idx]
-    except:
-        raise Exception(
-            "Could not find data for the provided month for the reference scene."
-        )
-    reference_date_obj = datetime.strptime(reference_date, "%Y%m")
-    ref_data = data[reference_date]
-    del data[reference_date]
-    del scene_dates[reference_date_idx]
+
+    if force_ref_id is None:
+        print("Finding reference id automatically using month:", reference_month)
+        try:
+            reference_date_idx = [
+                reference_month in date[-2:] for date in scene_dates
+            ].index(True)
+            reference_date = scene_dates[reference_date_idx]
+        except:
+            raise Exception(
+                "Could not find data for the provided month for the reference scene."
+            )
+        reference_date_obj = datetime.strptime(reference_date, "%Y%m")
+        ref_data = data[reference_date]
+        del data[reference_date]
+        del scene_dates[reference_date_idx]
 
     scene_ym_objects = [datetime.strptime(date, "%Y%m") for date in scene_dates]
 
