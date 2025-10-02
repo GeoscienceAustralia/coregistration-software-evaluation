@@ -2035,7 +2035,6 @@ def co_register(
     phase_corr_filter: bool = True,
     phase_corr_signal_thresh: float = 0.9,
     phase_corr_valid_num_points=10,
-    use_overlap: bool = True,
     rethrow_error: bool = False,
     resampling_resolution: str = "lower",
     return_shifted_images: bool = False,
@@ -2080,8 +2079,6 @@ def co_register(
         Signal threshold for the phase correlation filtering, by default 0.9.
     phase_corr_valid_num_points: int, Optional
         Minimum number of valid points for the phase correlation filtering, by default 10.
-    use_overlap: bool, Optional
-        Whether to use overlapping regions of the reference and target images, by default True.
     rethrow_error: bool, Optional
         Whether to rethrow errors during the co-registration process, by default False.
     resampling_resolution: str, Optional
@@ -2111,8 +2108,6 @@ def co_register(
 
     run_start = full_start = time.time()
 
-    ORIGIN_DIST_THRESHOLD = 1
-
     criteria = (
         cv.TERM_CRITERIA_EPS | cv.TERM_CRITERIA_COUNT,
         number_of_iterations,
@@ -2125,44 +2120,24 @@ def co_register(
     ref_raster = rasterio.open(reference)
     tgt_profiles = []
     for tgt in targets:
-        if type(tgt) == str:
-            tgt_raster = rasterio.open(tgt)
-            tgt_profiles.append(tgt_raster.profile)
+        tgt_raster = rasterio.open(tgt)
+        tgt_profiles.append(tgt_raster.profile)
 
-            ref_orig_x = abs(
-                ref_raster.profile["transform"].c / ref_raster.profile["transform"].a
-            )
-            ref_orig_y = abs(
-                ref_raster.profile["transform"].f / ref_raster.profile["transform"].e
-            )
-            ref_width = ref_raster.profile["width"]
-            ref_height = ref_raster.profile["height"]
+    ref_transform = ref_raster.profile["transform"]
+    tgt_transforms = [profile["transform"] for profile in tgt_profiles]
+    all_transforms = [ref_transform] + tgt_transforms
+    ref_width = ref_raster.profile["width"]
+    ref_height = ref_raster.profile["height"]
+    tgt_widths = [profile["width"] for profile in tgt_profiles]
+    tgt_heights = [profile["height"] for profile in tgt_profiles]
+    all_widths = [ref_width] + tgt_widths
+    all_heights = [ref_height] + tgt_heights
 
-            tgt_orig_xs = [
-                abs(p["transform"].c / p["transform"].a) for p in tgt_profiles
-            ]
-            tgt_orig_ys = [
-                abs(p["transform"].f / p["transform"].e) for p in tgt_profiles
-            ]
-            tgt_widths = [p["width"] for p in tgt_profiles]
-            tgt_heights = [p["height"] for p in tgt_profiles]
-
-            orig_x_diff = np.abs(np.diff(np.array([ref_orig_x] + tgt_orig_xs)))
-            orig_y_diff = np.abs(np.diff(np.array([ref_orig_y] + tgt_orig_ys)))
-            w_diff = np.abs(np.diff(np.array([ref_width] + tgt_widths)))
-            h_diff = np.abs(np.diff(np.array([ref_height] + tgt_heights)))
-
-            if (
-                (not np.all(orig_x_diff < ORIGIN_DIST_THRESHOLD))
-                or (not np.all(orig_y_diff < ORIGIN_DIST_THRESHOLD))
-                or (not np.all(w_diff == 0))
-                or (not np.all(h_diff == 0))
-            ) and (not use_overlap):
-                print(
-                    "WARNING: Origins or shapes of the reference or target images do not match. Consider using the `use_overlap` flag."
-                )
-
+    transform_condition = len(set(all_transforms)) > 1
+    shape_condition = (len(set(all_widths)) > 1) or (len(set(all_heights)) > 1)
+    use_overlap = transform_condition or shape_condition
     if use_overlap:
+        print("Using overlapping regions of the reference and target images.")
         tgt_imgs = []
         tgt_origs = []
         ref_imgs = []
@@ -2795,6 +2770,11 @@ def find_scenes_dict(
 
                 scene_dict[id][s] = url
                 scene_dict[id][f"{s}_alternate"] = url_alternate
+        else:
+            warnings.warn(
+                f"Acceptance list is not empty but feature {id} does not have all required assets: {acceptance_list}. Skipping feature..."
+            )
+            continue
 
     f0 = features[0].to_dict() if type(features[0]) != dict else features[0]
     if "landsat:scene_id" in f0["properties"]:
@@ -4286,7 +4266,8 @@ def process_existing_outputs(
                 suffix_to_add = f"{suffix_list[0]}_{filename_suffix}"
             else:
                 suffix_to_add = filename_suffix
-        proc_file = f"{os.path.join(process_dir, os.path.basename(originals_dir))}_{suffix_to_add}{ext}"
+            proc_file = f"{os.path.join(process_dir, os.path.basename(originals_dir))}_{suffix_to_add}{ext}"
+
         proc_file_ds = os.path.join(process_ds_dir, os.path.basename(proc_file))
         proc_files.append(proc_file)
         proc_files_ds.append(proc_file_ds)
