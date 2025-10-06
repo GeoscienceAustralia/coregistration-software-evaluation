@@ -3509,15 +3509,20 @@ def get_pair_dict(
 
     if force_ref_id is None:
         print("Finding reference id automatically using month:", reference_month)
+        available_months = [d[-2:] for d in list(data_dict.keys())]
         try:
+            assert (
+                reference_month in available_months
+            ), f"Reference month {reference_month} not in available months: {available_months}"
+        except AssertionError as e:
+            print(e)
+            print("Choosing first available month instead.")
+            reference_month = available_months[0]
             reference_date_idx = [
                 reference_month in date[-2:] for date in scene_dates
             ].index(True)
             reference_date = scene_dates[reference_date_idx]
-        except:
-            raise Exception(
-                "Could not find data for the provided month for the reference scene."
-            )
+
         reference_date_obj = datetime.strptime(reference_date, "%Y%m")
         ref_data = data[reference_date]
         del data[reference_date]
@@ -3611,6 +3616,26 @@ def get_pair_dict_alternate(
     ValueError
         Reference dictionary should be either 1 or 2, where 1 is the first dict and 2 is the second dict.
     """
+    available_months_1 = [d[-2:] for d in list(data_1.keys())]
+    available_months_2 = [d[-2:] for d in list(data_2.keys())]
+    try:
+        assert (
+            reference_month_1 in available_months_1
+        ), f"Reference month {reference_month_1} not in available months: {available_months_1}"
+    except AssertionError as e:
+        print(e)
+        print("Choosing first available month for reference 1 instead.")
+        reference_month_1 = available_months_1[0]
+
+    try:
+        assert (
+            reference_month_2 in available_months_2
+        ), f"Reference month {reference_month_2} not in available months: {available_months_2}"
+    except AssertionError as e:
+        print(e)
+        print("Choosing first available month for reference 2 instead.")
+        reference_month_2 = available_months_2[0]
+
     pair_1 = get_pair_dict(
         data_1,
         time_distance=time_distance,
