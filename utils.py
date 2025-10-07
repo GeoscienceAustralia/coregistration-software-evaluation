@@ -4910,26 +4910,50 @@ def combine_comparison_results(
 
     methods = ["Co-Register", "Karios", "AROSICS", "AROSICS Edge"]
 
+    df_list = []
     try:
-        coreg_df = pd.read_csv(f"{root_output}/Co_Register{dir_suffix}/output.csv")
+        try:
+            coreg_df = pd.read_csv(f"{root_output}/Co_Register{dir_suffix}/output.csv")
+        except:
+            coreg_df = pd.read_csv(
+                f"{root_output}/Co_Register{dir_suffix}_lpc/output.csv"
+            )
+        coreg_df["Method"] = ["Co-Register"] * len(coreg_df)
+        df_list.append(coreg_df)
     except:
-        coreg_df = pd.read_csv(f"{root_output}/Co_Register{dir_suffix}_lpc/output.csv")
-    coreg_df["Method"] = ["Co-Register"] * len(coreg_df)
+        print("Co-Register results not found, skipping.")
 
     if coreg_default_params is None:
         coreg_default_params = [True] * len(coreg_df)
 
-    karios_df = pd.read_csv(f"{root_output}/Karios{dir_suffix}/output.csv")
-    karios_df["Method"] = ["Karios"] * len(karios_df)
+    try:
+        karios_df = pd.read_csv(f"{root_output}/Karios{dir_suffix}/output.csv")
+        karios_df["Method"] = ["Karios"] * len(karios_df)
+        df_list.append(karios_df)
+    except:
+        print("Karios results not found, skipping.")
 
-    arosics_df = pd.read_csv(f"{root_output}/AROSICS{dir_suffix}/output.csv")
-    arosics_df["Method"] = ["AROSICS"] * len(arosics_df)
+    try:
+        arosics_df = pd.read_csv(f"{root_output}/AROSICS{dir_suffix}/output.csv")
+        arosics_df["Method"] = ["AROSICS"] * len(arosics_df)
+        df_list.append(arosics_df)
+    except:
+        print("AROSICS results not found, skipping.")
 
-    arosics_edge_df = pd.read_csv(f"{root_output}/AROSICS{dir_suffix}_edge/output.csv")
-    arosics_edge_df["Method"] = ["AROSICS Edge"] * len(arosics_edge_df)
+    try:
+        arosics_edge_df = pd.read_csv(
+            f"{root_output}/AROSICS{dir_suffix}_edge/output.csv"
+        )
+        arosics_edge_df["Method"] = ["AROSICS Edge"] * len(arosics_edge_df)
+        df_list.append(arosics_edge_df)
+    except:
+        print("AROSICS Edge results not found, skipping.")
+
+    if len(df_list) == 0:
+        print("No results found, cannot combine.")
+        return pd.DataFrame()
 
     # Combine all dataframes
-    df_list = [coreg_df, karios_df, arosics_df, arosics_edge_df]
     output_dfs = (
         pd.concat(
             df_list,
