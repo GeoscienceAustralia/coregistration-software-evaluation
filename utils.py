@@ -3518,10 +3518,10 @@ def get_pair_dict(
             print(e)
             print("Choosing first available month instead.")
             reference_month = available_months[0]
-            reference_date_idx = [
-                reference_month in date[-2:] for date in scene_dates
-            ].index(True)
-            reference_date = scene_dates[reference_date_idx]
+        reference_date_idx = [
+            reference_month in date[-2:] for date in scene_dates
+        ].index(True)
+        reference_date = scene_dates[reference_date_idx]
 
         reference_date_obj = datetime.strptime(reference_date, "%Y%m")
         ref_data = data[reference_date]
