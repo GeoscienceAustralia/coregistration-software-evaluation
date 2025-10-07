@@ -4908,8 +4908,7 @@ def combine_comparison_results(
 
     dir_suffix = f"_{dir_suffix}" if dir_suffix else ""
 
-    methods = ["Co-Register", "Karios", "AROSICS", "AROSICS Edge"]
-
+    methods = []
     df_list = []
     try:
         try:
@@ -4920,6 +4919,7 @@ def combine_comparison_results(
             )
         coreg_df["Method"] = ["Co-Register"] * len(coreg_df)
         df_list.append(coreg_df)
+        methods.append("Co-Register")
     except:
         print("Co-Register results not found, skipping.")
 
@@ -4930,6 +4930,7 @@ def combine_comparison_results(
         karios_df = pd.read_csv(f"{root_output}/Karios{dir_suffix}/output.csv")
         karios_df["Method"] = ["Karios"] * len(karios_df)
         df_list.append(karios_df)
+        methods.append("Karios")
     except:
         print("Karios results not found, skipping.")
 
@@ -4937,6 +4938,7 @@ def combine_comparison_results(
         arosics_df = pd.read_csv(f"{root_output}/AROSICS{dir_suffix}/output.csv")
         arosics_df["Method"] = ["AROSICS"] * len(arosics_df)
         df_list.append(arosics_df)
+        methods.append("AROSICS")
     except:
         print("AROSICS results not found, skipping.")
 
@@ -4946,6 +4948,7 @@ def combine_comparison_results(
         )
         arosics_edge_df["Method"] = ["AROSICS Edge"] * len(arosics_edge_df)
         df_list.append(arosics_edge_df)
+        methods.append("AROSICS Edge")
     except:
         print("AROSICS Edge results not found, skipping.")
 
