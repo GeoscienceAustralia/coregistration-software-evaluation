@@ -4910,6 +4910,7 @@ def combine_comparison_results(
 
     methods = []
     df_list = []
+    col_names = ["Title", "SSIM Raw", "MSE Raw"]
     try:
         try:
             coreg_df = pd.read_csv(f"{root_output}/Co_Register{dir_suffix}/output.csv")
@@ -4920,6 +4921,15 @@ def combine_comparison_results(
         coreg_df["Method"] = ["Co-Register"] * len(coreg_df)
         df_list.append(coreg_df)
         methods.append("Co-Register")
+        col_names.extend(
+            [
+                "Co-Register SSIM Aligned",
+                "Co-Register MSE Aligned",
+                "Co-Register Run Time",
+                "Co-Register Shifts",
+                "Co-Register Defaults",
+            ]
+        )
     except:
         print("Co-Register results not found, skipping.")
 
@@ -4931,6 +4941,15 @@ def combine_comparison_results(
         karios_df["Method"] = ["Karios"] * len(karios_df)
         df_list.append(karios_df)
         methods.append("Karios")
+        col_names.extend(
+            [
+                "Karios SSIM Aligned",
+                "Karios MSE Aligned",
+                "Karios Run Time",
+                "Karios Shifts",
+                "Karios Defaults",
+            ]
+        )
     except:
         print("Karios results not found, skipping.")
 
@@ -4939,6 +4958,15 @@ def combine_comparison_results(
         arosics_df["Method"] = ["AROSICS"] * len(arosics_df)
         df_list.append(arosics_df)
         methods.append("AROSICS")
+        col_names.extend(
+            [
+                "AROSICS SSIM Aligned",
+                "AROSICS MSE Aligned",
+                "AROSICS Run Time",
+                "AROSICS Shifts",
+                "AROSICS Defaults",
+            ]
+        )
     except:
         print("AROSICS results not found, skipping.")
 
@@ -4949,6 +4977,15 @@ def combine_comparison_results(
         arosics_edge_df["Method"] = ["AROSICS Edge"] * len(arosics_edge_df)
         df_list.append(arosics_edge_df)
         methods.append("AROSICS Edge")
+        col_names.extend(
+            [
+                "AROSICS Edge SSIM Aligned",
+                "AROSICS Edge MSE Aligned",
+                "AROSICS Edge Run Time",
+                "AROSICS Edge Shifts",
+                "AROSICS Edge Defaults",
+            ]
+        )
     except:
         print("AROSICS Edge results not found, skipping.")
 
@@ -4968,6 +5005,9 @@ def combine_comparison_results(
 
     target_0 = []
     target_1 = []
+
+    target_0.extend(["target_0"])
+    target_1.extend(["target_1"])
 
     for df in df_list:
         try:
@@ -5020,7 +5060,7 @@ def combine_comparison_results(
         else:
             target_1.extend([False])
 
-    out_df = pd.DataFrame([target_0, target_1])
+    out_df = pd.DataFrame([target_0, target_1], columns=col_names)
     out_df.to_csv(
         f"{root_output}/co_registration_results.csv",
         index=False,
