@@ -12,6 +12,7 @@ import shutil
 from rasterio.enums import Resampling
 import matplotlib.pyplot as plt
 from rasterio.warp import calculate_default_transform, reproject
+from rasterio.fill import fillnodata
 import numpy as np
 import imageio
 import cv2 as cv
@@ -473,6 +474,7 @@ def downsample_dataset(
     force_shape: tuple = (),  # (height, width)
     readjust_origin: bool = False,
     round_resolution: bool = False,
+    masked_data: bool = False,
 ) -> tuple:
     """
     Downsamples the output data and returns the new downsampled data and its new affine transformation according to `scale_factor`
@@ -500,6 +502,8 @@ def downsample_dataset(
     round_resolution : bool, optional
         If True, the pixel size in the affine transformation will be rounded to the nearest integer.
         Defaults to False.
+    masked_data : bool, optional
+        If True, reads the data as a masked array to handle nodata values. Defaults to False.
 
     Returns
     -------
@@ -525,6 +529,7 @@ def downsample_dataset(
                 *output_shape,
             ),
             resampling=Resampling.bilinear,
+            masked=masked_data,
         )
 
         if enhance_function is not None:
@@ -2970,6 +2975,8 @@ def make_composite_scene(
     min_max_scaling: bool = True,
     three_channel: bool = False,
     remove_nans: bool = False,
+    fill_nodata: bool = False,
+    fill_nodata_max_threshold: int = 10,
 ) -> np.ndarray:
     """Makes a composite image from the given dataset paths.
 
@@ -3006,6 +3013,10 @@ def make_composite_scene(
         If True, the output image will be a 3-channel image, by default False.
     remove_nans : bool, optional
         If True, NaN values in the image will be removed, by default False.
+    fill_nodata : bool, optional
+        If True, fills small nodata holes in the image, by default False.
+    fill_nodata_max_threshold : int, optional
+        Maximum size of nodata holes to fill, by default 10.
 
     Returns
     -------
@@ -3021,7 +3032,10 @@ def make_composite_scene(
         if not os.path.isfile(dataset_paths):
             raise FileNotFoundError(f"Output file {dataset_paths} does not exist.")
         profile = rasterio.open(dataset_paths).profile
-        img = flip_img(rasterio.open(dataset_paths).read())
+        img = rasterio.open(dataset_paths).read(masked=fill_nodata)
+        if fill_nodata:
+            img = fillnodata(img, smoothing_iterations=fill_nodata_max_threshold)
+        img = flip_img(img)
     else:
 
         if reference_band_number is not None:
@@ -3042,11 +3056,15 @@ def make_composite_scene(
                 bs, _ = downsample_dataset(
                     b,
                     force_shape=(profile["height"], profile["width"]),
+                    masked_data=fill_nodata,
                 )
-                bs = bs[0, :, :]
             else:
-                bs = rasterio.open(b).read(1)
+                bs = rasterio.open(b).read(masked=fill_nodata)
+                
+            if fill_nodata:
+                bs = fillnodata(bs, smoothing_iterations=fill_nodata_max_threshold)
 
+            bs = bs[0, :, :]
             band_imgs.append(bs)
 
         if remove_nans:
@@ -4234,6 +4252,8 @@ def process_existing_outputs(
     num_cpu: int = 1,
     write_pairs: bool = True,
     reference_band_number: int | None = None,
+    fill_nodata: bool = False,
+    fill_nodata_max_threshold: int = 10,
 ) -> None:
     """Processes existing files into composite scenes and saves them to the specified output directory.
 
@@ -4343,6 +4363,8 @@ def process_existing_outputs(
                     min_max_scaling,
                     three_channel,
                     remove_nans,
+                    fill_nodata,
+                    fill_nodata_max_threshold,
                 )
             else:
                 proc_file_to_process.append(proc_file)
@@ -4383,6 +4405,8 @@ def process_existing_outputs(
                         min_max_scaling,
                         three_channel,
                         remove_nans,
+                        fill_nodata,
+                        fill_nodata_max_threshold,
                     )
                     for file, proc_file in list(
                         zip(existing_files_to_process, proc_file_to_process)
@@ -4454,6 +4478,8 @@ def download_and_process_series(
     stream_out_scale_factor: float | list[float] | None = None,
     stream_reshape_method: Resampling = Resampling.bilinear,
     stream_round_transform: bool = True,
+    fill_nodata: bool = False,
+    fill_nodata_max_threshold: int = 10,
 ) -> list:
     """Downloads and processes a series of scenes from AWS S3, creating composite images from the specified bands.
 
@@ -4520,6 +4546,10 @@ def download_and_process_series(
         Resampling method used for reshaping the streamed data.
     stream_round_transform: bool = True
         Rounds the transform of the streamed data to the nearest integer.
+    fill_nodata: bool = False
+        If True, fills nodata values in the streamed data using inverse distance weighting interpolation.
+    fill_nodata_max_threshold: int = 10
+        Maximum size of nodata regions to fill when `fill_nodata` is True.
 
     Returns
     -------
@@ -4671,6 +4701,8 @@ def download_and_process_series(
                 min_max_scaling,
                 three_channel,
                 remove_nans,
+                fill_nodata,
+                fill_nodata_max_threshold,
             )
         if not proc_ds_exists and scale_factor != 1.0:
             downsample_dataset(proc_file, scale_factor, proc_file_ds)
@@ -4768,6 +4800,9 @@ def download_and_process_pairs(
     force_reprocess: bool = False,
     reference_band_number: int | None = None,
     filename_suffix: str = "PROC",
+    fill_nodata: bool = False,
+    fill_nodata_max_threshold: int = 10,
+    download_only: bool = False,
 ):
     """Downloads scenes from the provided data dictionary or list, processes them into composites, and saves them to the specified output directory.
 
@@ -4807,6 +4842,12 @@ def download_and_process_pairs(
         Reference band number for the reprojecting and resampling the images to the reference image, by default None
     filename_suffix : str, optional
         Suffix to be added to the processed files, by default "PROC"
+    fill_nodata : bool, optional
+        Whether to fill nodata values in the images, by default False
+    fill_nodata_max_threshold : int, optional
+        Maximum searching threshold for pixels with nodata values, by default 10
+    download_only : bool, optional
+        If True, only downloads the scenes without processing them, by default False
     """
     os.makedirs(output_dir, exist_ok=True)
 
@@ -4865,6 +4906,9 @@ def download_and_process_pairs(
         averaging,
         reference_band_number,
         filename_suffix,
+        download_only=download_only,
+        fill_nodata=fill_nodata,
+        fill_nodata_max_threshold=fill_nodata_max_threshold,
     )
 
     cols = ["Reference", "Closest_target", "Farthest_target"]
