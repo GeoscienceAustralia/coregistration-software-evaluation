@@ -3034,7 +3034,7 @@ def make_composite_scene(
         profile = rasterio.open(dataset_paths).profile
         img = rasterio.open(dataset_paths).read(masked=fill_nodata)
         if fill_nodata:
-            img = fillnodata(img, smoothing_iterations=fill_nodata_max_threshold)
+            img = fillnodata(img, max_search_distance=fill_nodata_max_threshold)
         img = flip_img(img)
     else:
 
@@ -3062,7 +3062,7 @@ def make_composite_scene(
                 bs = rasterio.open(b).read(masked=fill_nodata)
                 
             if fill_nodata:
-                bs = fillnodata(bs, smoothing_iterations=fill_nodata_max_threshold)
+                bs = fillnodata(bs, max_search_distance=fill_nodata_max_threshold)
 
             bs = bs[0, :, :]
             band_imgs.append(bs)
