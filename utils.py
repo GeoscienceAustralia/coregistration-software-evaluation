@@ -2034,8 +2034,6 @@ def co_register(
     ),
     output_path: str = "",
     export_outputs: bool = True,
-    generate_gif: bool = True,
-    generate_csv: bool = True,
     fps: int = 3,
     of_dist_thresh: Union[None, int, float] = 2,  # pixels
     phase_corr_filter: bool = True,
@@ -2043,7 +2041,6 @@ def co_register(
     phase_corr_valid_num_points=10,
     rethrow_error: bool = False,
     resampling_resolution: str = "lower",
-    return_shifted_images: bool = False,
     laplacian_kernel_size: Union[None, int, list] = None,
     laplacian_for_targets_ids: list | None = None,
     lower_of_dist_thresh: Union[None, int, float] = None,
@@ -2071,10 +2068,6 @@ def co_register(
         Path to save the output images, by default "" (no output).
     export_outputs: bool, Optional
         Whether to export the output images, by default True.
-    generate_gif: bool, Optional
-        Whether to generate a GIF of the co-registration process, by default True.
-    generate_csv: bool, Optional
-        Whether to generate a CSV file with the co-registration results, by default True.
     fps: int, Optional
         Frames per second for the GIF, by default 3.
     of_dist_thresh: Union[None, int, float], Optional
@@ -2089,8 +2082,6 @@ def co_register(
         Whether to rethrow errors during the co-registration process, by default False.
     resampling_resolution: str, Optional
         Resolution for resampling the images, by default "lower". Can be "lower" or "higher".
-    return_shifted_images: bool, Optional
-        Whether to return the shifted images, by default False.
     laplacian_kernel_size: Union[None, int, list], Optional
         Kernel size for the Laplacian filter, by default None (no filtering). If a list is provided, it will be applied to each target image.
     laplacian_for_targets_ids: list | None, Optional
@@ -2246,22 +2237,16 @@ def co_register(
                 )
             else:
                 tgt_imgs_temp.append(tgt_img.copy())
-        grey_tgts = tgt_imgs.copy()
         tgt_imgs = tgt_imgs_temp.copy()
         tgt_imgs_temp = None
 
-    if generate_gif:
-        export_outputs = True
-    if export_outputs or generate_gif:
+    if export_outputs:
         if (type(reference) != str) or (any(type(el) != str for el in targets)):
             print(
                 "To generate output GeoTiffs or GIF animation all inputs should be string paths to input scenes. Setting related flags to False."
             )
             export_outputs = False
-            generate_gif = False
-            generate_csv = False
-    if export_outputs:
-        os.makedirs(output_path, exist_ok=True)
+            os.makedirs(output_path, exist_ok=True)
 
     tgt_aligned_list = []
     processed_tgt_images = []
@@ -2269,9 +2254,7 @@ def co_register(
     shifts = []
     process_ids = []
 
-    temp_dir = "temp/outputs"
-    os.makedirs(temp_dir, exist_ok=True)
-    if return_shifted_images:
+    if export_outputs:
         aligned_output_dir = os.path.join(output_path, "Aligned")
         os.makedirs(aligned_output_dir, exist_ok=True)
     for i, tgt_img in enumerate(tgt_imgs):
@@ -2375,45 +2358,21 @@ def co_register(
             shifts.append(
                 (shift_x / scale_factors[i][1], shift_y / scale_factors[i][0])
             )
-
-            to_warp = tgt_img if laplacian_kernel_size is None else grey_tgts[i]
-
-            tgt_aligned = warp_affine_dataset(
-                to_warp,
-                translation_x=shift_x,
-                translation_y=shift_y,
-            )
-            tgt_aligned_list.append(tgt_aligned)
             process_ids.append(i)
 
             if export_outputs:
-                profile = tgt_profiles[i]
-                updated_profile = profile.copy()
-                temp_path = os.path.join(temp_dir, f"out_{i}.tiff")
                 out_path = os.path.join(
                     aligned_output_dir, os.path.basename(targets[i])
                 )
-                updated_profile["transform"] = rasterio.Affine(
-                    profile["transform"].a,
-                    profile["transform"].b,
-                    profile["transform"].c
-                    + (shift_x / scale_factors[i][1]) * profile["transform"].a,
-                    profile["transform"].d,
-                    profile["transform"].e,
-                    profile["transform"].f
-                    + (shift_y / scale_factors[i][0]) * profile["transform"].e,
+                warp_affine_dataset(
+                    targets[i],
+                    out_path,
+                    translation_x=shift_x / scale_factors[i][1],
+                    translation_y=shift_y / scale_factors[i][0],
                 )
-                with rasterio.open(
-                    out_path if return_shifted_images else temp_path,
-                    "w",
-                    **updated_profile,
-                ) as ds:
-                    for j in range(0, updated_profile["count"]):
-                        ds.write(tgt_origs[i][:, :, j], j + 1)
                 processed_tgt_images.append(targets[i])
-                processed_output_images.append(
-                    out_path if return_shifted_images else temp_path
-                )
+                processed_output_images.append(out_path)
+
         except Exception as e:
             print(
                 f"Algorithm did not converge for target {i} ({os.path.basename(targets[i])}) {'for the reason below:' if rethrow_error else ''}\n"
@@ -2426,137 +2385,16 @@ def co_register(
     run_time = time.time() - run_start
 
     if export_outputs:
-        if laplacian_kernel_size is not None:
-            if use_overlap:
-                ref_imgs = grey_refs
-            else:
-                ref_img = grey_ref
-            grey_tgts = [grey_tgts[id] for id in process_ids]
-            tgt_imgs = grey_tgts
-        else:
-            tgt_imgs = [tgt_imgs[id] for id in process_ids]
-
-        if use_overlap:
-            ref_imgs = [ref_imgs[id] for id in process_ids]
-
-        out_gif = os.path.join(
-            output_path,
-            f"output.gif",
+        generate_results_from_raw_inputs(
+            reference,
+            processed_output_images,
+            processed_tgt_images,
+            output_dir=output_path,
+            shifts=shifts,
+            run_time=run_time,
+            target_ids=process_ids,
+            gif_fps=fps,
         )
-        target_titles = [f"target_{id}" for id in process_ids]
-
-        if os.path.isfile(out_gif):
-            os.remove(out_gif)
-        datasets_paths = [reference] + processed_output_images
-        ssims_aligned = [
-            np.round(
-                ssim(
-                    ref_imgs[k] if use_overlap else ref_img,
-                    tgt_aligned_list[k],
-                    win_size=3,
-                ),
-                3,
-            )
-            for k in range(len(tgt_aligned_list))
-        ]
-        mse_aligned = [
-            np.round(
-                mse(ref_imgs[k] if use_overlap else ref_img, tgt_aligned_list[k]), 3
-            )
-            for k in range(len(tgt_aligned_list))
-        ]
-        datasets_titles = ["Reference"] + [
-            f"{target_title}, ssim:{ssim_score}, mse:{mse_score}"
-            for target_title, ssim_score, mse_score in zip(
-                target_titles, ssims_aligned, mse_aligned
-            )
-        ]
-
-        if generate_gif:
-            make_difference_gif(
-                datasets_paths,
-                out_gif,
-                datasets_titles,
-                fps=fps,
-                mosaic_scenes=True,
-            )
-
-        out_gif = os.path.join(
-            output_path,
-            f"output_raw.gif",
-        )
-        if os.path.isfile(out_gif):
-            os.remove(out_gif)
-        datasets_paths = [reference] + processed_tgt_images
-        ssims_raw = [
-            np.round(
-                ssim(
-                    ref_imgs[k] if use_overlap else ref_img,
-                    tgt_imgs[k] if laplacian_kernel_size is None else grey_tgts[k],
-                    win_size=3,
-                ),
-                3,
-            )
-            for k in range(len(tgt_aligned_list))
-        ]
-        mse_raw = [
-            np.round(
-                mse(
-                    ref_imgs[k] if use_overlap else ref_img,
-                    tgt_imgs[k] if laplacian_kernel_size is None else grey_tgts[k],
-                ),
-                3,
-            )
-            for k in range(len(tgt_aligned_list))
-        ]
-        datasets_titles = ["Reference"] + [
-            f"{target_title}, ssim:{ssim_score}, mse:{mse_score}"
-            for target_title, ssim_score, mse_score in zip(
-                target_titles, ssims_raw, mse_raw
-            )
-        ]
-
-        if generate_gif:
-            make_difference_gif(
-                datasets_paths,
-                out_gif,
-                datasets_titles,
-                fps=fps,
-                mosaic_scenes=True,
-            )
-
-        if generate_csv:
-            out_ssim = os.path.join(
-                output_path,
-                f"output.csv",
-            )
-            out_ssim_df = pd.DataFrame(
-                zip(
-                    target_titles,
-                    ssims_raw,
-                    mse_raw,
-                    ssims_aligned,
-                    mse_aligned,
-                    [np.round(run_time, 2).tolist()] * len(target_titles),
-                    [
-                        tuple([np.round(el.tolist(), 3).tolist() for el in shift])
-                        for shift in shifts
-                    ],
-                ),
-                columns=[
-                    "Title",
-                    "SSIM Raw",
-                    "MSE Raw",
-                    "SSIM Aligned",
-                    "MSE Aligned",
-                    "Run Time",
-                    "Shifts",
-                ],
-                index=None,
-            )
-            out_ssim_df.to_csv(out_ssim, encoding="utf-8")
-
-    shutil.rmtree(temp_dir, ignore_errors=True)
 
     full_time = time.time() - full_start
     print(f"Run time: {run_time} seconds")
@@ -3060,7 +2898,7 @@ def make_composite_scene(
                 )
             else:
                 bs = rasterio.open(b).read(masked=fill_nodata)
-                
+
             if fill_nodata:
                 bs = fillnodata(bs, max_search_distance=fill_nodata_max_threshold)
 
@@ -3699,6 +3537,7 @@ def generate_results_from_raw_inputs(
     run_time: float,
     output_name: str = "output",
     target_ids: list | None = None,
+    gif_fps: int = 3,
 ) -> None:
     """Generates results from raw inputs by creating GIFs and CSV files.
 
@@ -3720,6 +3559,8 @@ def generate_results_from_raw_inputs(
         Name of the output files, by default "output".
     target_ids : list | None, optional
         Ids of the processed target images, by default None.
+    gif_fps : int, optional
+        Frames per second for the output GIFs, by default 3.
 
     Returns
     -------
@@ -3766,6 +3607,7 @@ def generate_results_from_raw_inputs(
         output_path,
         datasets_titles,
         mosaic_scenes=True,
+        fps=gif_fps,
     )
 
     output_path = os.path.join(output_dir, f"{output_name}_raw.gif")
@@ -3799,6 +3641,7 @@ def generate_results_from_raw_inputs(
         output_path,
         datasets_titles,
         mosaic_scenes=True,
+        fps=gif_fps,
     )
 
     output_path = os.path.join(output_dir, f"{output_name}.csv")
