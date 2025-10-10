@@ -2508,8 +2508,10 @@ def query_stac_server(
 
         data = requests.post(server_url, headers=headers, json=query).json()
         error = data.get("message", "")
-        if error:
-            raise Exception(f"STAC-Server failed and returned: {error}")
+        if error or data.get("code") is not None:
+            raise Exception(
+                f"STAC-Server failed and returned:\n {data['code']}\n {data['description']}"
+            )
         features = data["features"]
 
         context = data.get("context", {})
