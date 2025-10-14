@@ -2767,9 +2767,8 @@ def get_search_query(
     if bbox is not None:
         if type(bbox) != list:
             bbox = [bbox.left, bbox.bottom, bbox.right, bbox.top]
-        query = {
-            "bbox": bbox,
-        }
+        query["bbox"] = bbox
+        
     if pystac_query:
         del query["limit"]
         del query["page"]
