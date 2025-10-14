@@ -3600,11 +3600,15 @@ def generate_results_from_raw_inputs(
         np.round(mse(ref_imgs[id], tgt_aligned_list[id]), 3)
         for id in range(len(tgt_aligned_list))
     ]
+    zncc_aligned = [
+        np.round(zncc(ref_imgs[id], tgt_aligned_list[id]), 3)
+        for id in range(len(tgt_aligned_list))
+    ]
     target_titles = [f"target_{str(i)}" for i in target_ids]
     datasets_titles = ["Reference"] + [
-        f"{target_title}, ssim:{ssim_score}, mse:{mse_score}"
-        for target_title, ssim_score, mse_score in zip(
-            target_titles, ssims_aligned, mse_aligned
+        f"{target_title}, ssim:{ssim_score}, mse:{mse_score}, zncc:{zncc_score}"
+        for target_title, ssim_score, mse_score, zncc_score in zip(
+            target_titles, ssims_aligned, mse_aligned, zncc_aligned
         )
     ]
     make_difference_gif(
@@ -3635,10 +3639,14 @@ def generate_results_from_raw_inputs(
         np.round(mse(ref_imgs[id], tgt_raw_list[id]), 3)
         for id in range(len(tgt_raw_list))
     ]
+    zncc_aligned_raw = [
+        np.round(zncc(ref_imgs[id], tgt_raw_list[id]), 3)
+        for id in range(len(tgt_raw_list))
+    ]
     datasets_titles = ["Reference"] + [
-        f"{target_title}, ssim:{ssim_score}, mse:{mse_score}"
-        for target_title, ssim_score, mse_score in zip(
-            target_titles, ssims_aligned_raw, mse_aligned_raw
+        f"{target_title}, ssim:{ssim_score}, mse:{mse_score}, zncc:{zncc_score}"
+        for target_title, ssim_score, mse_score, zncc_score in zip(
+            target_titles, ssims_aligned_raw, mse_aligned_raw, zncc_aligned_raw
         )
     ]
     make_difference_gif(
@@ -3657,8 +3665,10 @@ def generate_results_from_raw_inputs(
             target_titles,
             ssims_aligned_raw,
             mse_aligned_raw,
+            zncc_aligned_raw,
             ssims_aligned,
             mse_aligned,
+            zncc_aligned,
             [np.round(run_time, 2).tolist()] * len(target_titles),
             [
                 tuple([np.round(el.tolist(), 3).tolist() for el in shift])
@@ -3669,8 +3679,10 @@ def generate_results_from_raw_inputs(
             "Title",
             "SSIM Raw",
             "MSE Raw",
+            "ZNCC Raw",
             "SSIM Aligned",
             "MSE Aligned",
+            "ZNCC Aligned",
             "Run Time",
             "Shifts",
         ],
@@ -4802,7 +4814,7 @@ def combine_comparison_results(
 
     methods = []
     df_list = []
-    col_names = ["Title", "SSIM Raw", "MSE Raw"]
+    col_names = ["Title", "SSIM Raw", "MSE Raw", "ZNCC Raw"]
     try:
         try:
             coreg_df = pd.read_csv(f"{root_output}/Co_Register{dir_suffix}/output.csv")
@@ -4817,6 +4829,7 @@ def combine_comparison_results(
             [
                 "Co-Register SSIM Aligned",
                 "Co-Register MSE Aligned",
+                "Co-Register ZNCC Aligned",
                 "Co-Register Run Time",
                 "Co-Register Shifts",
                 "Co-Register Defaults",
@@ -4837,6 +4850,7 @@ def combine_comparison_results(
             [
                 "Karios SSIM Aligned",
                 "Karios MSE Aligned",
+                "Karios ZNCC Aligned",
                 "Karios Run Time",
                 "Karios Shifts",
                 "Karios Defaults",
@@ -4854,6 +4868,7 @@ def combine_comparison_results(
             [
                 "AROSICS SSIM Aligned",
                 "AROSICS MSE Aligned",
+                "AROSICS ZNCC Aligned",
                 "AROSICS Run Time",
                 "AROSICS Shifts",
                 "AROSICS Defaults",
@@ -4873,6 +4888,7 @@ def combine_comparison_results(
             [
                 "AROSICS Edge SSIM Aligned",
                 "AROSICS Edge MSE Aligned",
+                "AROSICS Edge ZNCC Aligned",
                 "AROSICS Edge Run Time",
                 "AROSICS Edge Shifts",
                 "AROSICS Edge Defaults",
@@ -4904,7 +4920,7 @@ def combine_comparison_results(
     for df in df_list:
         try:
             target_0.extend(
-                df[df["Title"] == "target_0"][["SSIM Raw", "MSE Raw"]]
+                df[df["Title"] == "target_0"][["SSIM Raw", "MSE Raw", "ZNCC Raw"]]
                 .values[0]
                 .tolist()
             )
@@ -4915,7 +4931,7 @@ def combine_comparison_results(
     for df in df_list:
         try:
             target_1.extend(
-                df[df["Title"] == "target_1"][["SSIM Raw", "MSE Raw"]]
+                df[df["Title"] == "target_1"][["SSIM Raw", "MSE Raw", "ZNCC Raw"]]
                 .values[0]
                 .tolist()
             )
@@ -4928,7 +4944,7 @@ def combine_comparison_results(
 
         target_0_vals = method_slice[method_slice["Title"] == "target_0"]
         if target_0_vals.empty:
-            target_0.extend(["Failed"] * 4)
+            target_0.extend(["Failed"] * 5)
         else:
             target_0.extend(target_0_vals.values[0][3:].tolist())
 
@@ -4941,7 +4957,7 @@ def combine_comparison_results(
 
         target_1_vals = method_slice[method_slice["Title"] == "target_1"]
         if target_1_vals.empty:
-            target_1.extend(["Failed"] * 4)
+            target_1.extend(["Failed"] * 5)
         else:
             target_1.extend(target_1_vals.values[0][3:].tolist())
 
@@ -5251,3 +5267,47 @@ def create_dataset_from_files(
     if optimize_dataset:
         ds = optimize(ds)[0]
     return ds
+
+
+def zncc(template, image_patch):
+    """
+    Calculates the Zero-Normalized Cross-Correlation (ZNCC) between a template
+    and an image patch.
+
+    Args:
+        template (np.ndarray): The template image or signal.
+        image_patch (np.ndarray): The image patch or signal to compare with the template.
+
+    Returns:
+        float: The ZNCC score, a scalar value between -1 and 1.
+               1 indicates a perfect match, -1 indicates a perfect mismatch,
+               and 0 indicates no correlation.
+    """
+
+    # Ensure inputs are NumPy arrays
+    template = np.array(template, dtype=np.float64)
+    image_patch = np.array(image_patch, dtype=np.float64)
+
+    # Check if the dimensions match
+    if template.shape != image_patch.shape:
+        raise ValueError("Template and image patch must have the same dimensions.")
+
+    # Subtract the mean from both the template and the image patch
+    template_mean_subtracted = template - np.mean(template)
+    image_patch_mean_subtracted = image_patch - np.mean(image_patch)
+
+    # Calculate the standard deviation of both
+    template_std = np.std(template)
+    image_patch_std = np.std(image_patch)
+
+    # Handle cases where standard deviation is zero to avoid division by zero
+    if template_std == 0 or image_patch_std == 0:
+        return 0.0  # Or handle as an error depending on desired behavior
+
+    # Calculate the ZNCC score
+    numerator = np.sum(template_mean_subtracted * image_patch_mean_subtracted)
+    denominator = (
+        template_std * image_patch_std * template.size
+    )  # template.size is equivalent to N in the formula
+
+    return numerator / denominator
