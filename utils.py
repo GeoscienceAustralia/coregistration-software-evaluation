@@ -2721,7 +2721,7 @@ def find_scenes_dict(
 
 
 def get_search_query(
-    bbox: Union[list, BoundingBox],
+    bbox: Union[list, BoundingBox] | None = None,
     collections: list[str] | None = ["landsat-c2l2-sr", "landsat-c2l2-st"],
     collection_category: list[str] | None = ["T1", "T2", "RT"],
     platform: str | list | None = "LANDSAT_8",
@@ -2760,13 +2760,16 @@ def get_search_query(
         Dictionary representing the search query to be sent to the STAC server.
     """
 
-    if type(bbox) != list:
-        bbox = [bbox.left, bbox.bottom, bbox.right, bbox.top]
     query = {
-        "bbox": bbox,
         "page": 1,
         "limit": 100,
     }
+    if bbox is not None:
+        if type(bbox) != list:
+            bbox = [bbox.left, bbox.bottom, bbox.right, bbox.top]
+        query = {
+            "bbox": bbox,
+        }
     if pystac_query:
         del query["limit"]
         del query["page"]
