@@ -4909,7 +4909,6 @@ def combine_comparison_results(
         .reset_index(drop=True)
         .drop("Unnamed: 0", axis=1)
     )
-    output_dfs
 
     target_0 = []
     target_1 = []
@@ -4946,7 +4945,7 @@ def combine_comparison_results(
         if target_0_vals.empty:
             target_0.extend(["Failed"] * 5)
         else:
-            target_0.extend(target_0_vals.values[0][3:].tolist())
+            target_0.extend(target_0_vals.values[0][4:].tolist())
 
         if i == 0:
             target_0.extend([coreg_default_params[0]])
@@ -4959,7 +4958,7 @@ def combine_comparison_results(
         if target_1_vals.empty:
             target_1.extend(["Failed"] * 5)
         else:
-            target_1.extend(target_1_vals.values[0][3:].tolist())
+            target_1.extend(target_1_vals.values[0][4:].tolist())
 
         if i == 0:
             target_1.extend([coreg_default_params[1]])
