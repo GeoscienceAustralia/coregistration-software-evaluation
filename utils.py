@@ -5335,7 +5335,9 @@ def zncc(template: np.ndarray, image_patch: np.ndarray) -> float:
 
 
 def coreg(reference: str, targets: list[str], **kwargs) -> tuple:
-    """Wrapper for the co_register function to re-run with Laplacian filter if any targets failed.
+    """
+    Wrapper for the co_register function to re-run with Laplacian filter if any targets failed.
+
     Parameters
     ----------
     reference : str
@@ -5343,7 +5345,7 @@ def coreg(reference: str, targets: list[str], **kwargs) -> tuple:
     targets : list[str]
         List of paths to the target images.
     **kwargs
-        Additional keyword arguments to pass to the co_register function.
+        Additional keyword arguments to pass to the `co_register` function.
     """
 
     _, shifts, target_ids = co_register(
