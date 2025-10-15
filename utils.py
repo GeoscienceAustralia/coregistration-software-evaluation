@@ -2536,6 +2536,10 @@ def query_stac_server(
                 )
             )
 
+            if id_filter is not None:
+                print("Filtering items by id filter...")
+                features = [f for f in features if id_filter in f["id"]]
+
     return features
 
 
