@@ -2772,7 +2772,7 @@ def get_search_query(
         if type(bbox) != list:
             bbox = [bbox.left, bbox.bottom, bbox.right, bbox.top]
         query["bbox"] = bbox
-        
+
     if pystac_query:
         del query["limit"]
         del query["page"]
@@ -4394,6 +4394,7 @@ def download_and_process_series(
         Preserve the depth of the original images, by default False
     min_max_scaling : bool, optional
         Use min-max scaling for the images, by default True
+        `stretch_contrast` will override this setting if enabled.
     extra_bands : list[str] | None, optional
         Additional bands to be downloaded, by default None
     three_channel : bool, optional
@@ -4657,6 +4658,7 @@ def download_and_process_pairs(
     gamma: float = 1.0,
     equalise_histogram: bool = False,
     stretch_contrast: bool = False,
+    min_max_scaling: bool = False,
     gray_scale: bool = False,
     averaging: bool = False,
     subdir: str = "true_color",
@@ -4666,6 +4668,7 @@ def download_and_process_pairs(
     fill_nodata: bool = False,
     fill_nodata_max_threshold: int = 10,
     download_only: bool = False,
+    preserve_depth: bool = False,
 ):
     """Downloads scenes from the provided data dictionary or list, processes them into composites, and saves them to the specified output directory.
 
@@ -4693,6 +4696,9 @@ def download_and_process_pairs(
         Equalise histogram of the images, by default False
     stretch_contrast : bool, optional
         Intensity enhancement of the images, by default False
+    min_max_scaling : bool, optional
+        Use min-max scaling for the images, by default False
+        `stretch_contrast` will override this setting if enabled.
     gray_scale : bool, optional
         Use gray scale images, by default False
     averaging : bool, optional
@@ -4711,6 +4717,8 @@ def download_and_process_pairs(
         Maximum searching threshold for pixels with nodata values, by default 10
     download_only : bool, optional
         If True, only downloads the scenes without processing them, by default False
+    preserve_depth : bool, optional
+        Preserve the depth of the original images, by default False
     """
     os.makedirs(output_dir, exist_ok=True)
 
@@ -4772,6 +4780,8 @@ def download_and_process_pairs(
         download_only=download_only,
         fill_nodata=fill_nodata,
         fill_nodata_max_threshold=fill_nodata_max_threshold,
+        min_max_scaling=min_max_scaling,
+        preserve_depth=preserve_depth,
     )
 
     cols = ["Reference", "Closest_target", "Farthest_target"]
