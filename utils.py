@@ -2045,6 +2045,7 @@ def co_register(
     laplacian_for_targets_ids: list | None = None,
     lower_of_dist_thresh: Union[None, int, float] = None,
     band_number: Union[None, int] = None,
+    no_export_when_any_failed: bool = False,
 ) -> tuple:
     """
     Co-registers the target images to the reference image using optical flow and phase correlation.
@@ -2090,6 +2091,8 @@ def co_register(
         Lower distance threshold for filtering the points, by default None (no lower threshold).
     band_number: Union[None, int], Optional
         Band number to use for the target images, by default None (use all bands). If specified, it will select the band from the target images.
+    no_export_when_any_failed: bool, Optional
+        If True, no output will be exported if any target image fails to co-register, by default False.
 
     Returns
     -------
@@ -2253,6 +2256,7 @@ def co_register(
     processed_output_images = []
     shifts = []
     process_ids = []
+    all_successful = True
 
     if export_outputs:
         aligned_output_dir = os.path.join(output_path, "Aligned")
@@ -2306,11 +2310,16 @@ def co_register(
             )
 
             if tgt_good is None:
+                print(
+                    f"For target {i} ({os.path.basename(targets[i])}), couldn't find valid features for target or reference. Skipping this target.\n"
+                )
+                all_successful = False
                 continue
             if tgt_good.shape[1] < 4:
                 print(
                     f"""For target {i} ({os.path.basename(targets[i])}), couldn't find enough good features for target or reference. Num features: {tgt_good.shape[0]}\n"""
                 )
+                all_successful = False
                 continue
             _, inliers = cv.estimateAffine2D(tgt_good, ref_good)
 
@@ -2324,6 +2333,7 @@ def co_register(
                 print(
                     f"For target {i} ({os.path.basename(targets[i])}), no valid features found after RANSAC filtering.\n"
                 )
+                all_successful = False
                 continue
 
             if phase_corr_filter:
@@ -2353,6 +2363,7 @@ def co_register(
                 print(
                     f"No valid shifts found for target {i} ({os.path.basename(targets[i])})\n"
                 )
+                all_successful = False
                 continue
 
             shifts.append(
@@ -2380,11 +2391,12 @@ def co_register(
             if rethrow_error:
                 raise
             else:
+                all_successful = False
                 print(e)
 
     run_time = time.time() - run_start
 
-    if export_outputs:
+    if export_outputs and (all_successful or not no_export_when_any_failed):
         generate_results_from_raw_inputs(
             reference,
             processed_output_images,
@@ -4803,7 +4815,6 @@ def download_and_process_pairs(
 
 def combine_comparison_results(
     root_output: str,
-    coreg_default_params: list[bool] | None,
     dir_suffix: str | None = None,
 ) -> pd.DataFrame:
     """Creates a Dataframe with the results of the co-registration methods.
@@ -4812,8 +4823,6 @@ def combine_comparison_results(
     ----------
     root_output : str
         Output directory where the results are stored.
-    coreg_default_params : list[bool] | None
-        Defult parameters for the Co-Register method, by default None
     dir_suffix : str | None, optional
         Suffix for the directory names, by default None
 
@@ -4960,9 +4969,7 @@ def combine_comparison_results(
         else:
             target_0.extend(target_0_vals.values[0][4:].tolist())
 
-        if i == 0:
-            target_0.extend([coreg_default_params[0]])
-        elif i == 1 or i == 2:
+        if i in range(3):  # Co-Register, Karios, AROSICS
             target_0.extend([True])
         else:
             target_0.extend([False])
@@ -4973,9 +4980,7 @@ def combine_comparison_results(
         else:
             target_1.extend(target_1_vals.values[0][4:].tolist())
 
-        if i == 0:
-            target_1.extend([coreg_default_params[1]])
-        elif i == 1 or i == 2:
+        if i in range(3):  # Co-Register, Karios, AROSICS
             target_1.extend([True])
         else:
             target_1.extend([False])
@@ -5281,16 +5286,20 @@ def create_dataset_from_files(
     return ds
 
 
-def zncc(template, image_patch):
+def zncc(template: np.ndarray, image_patch: np.ndarray) -> float:
     """
     Calculates the Zero-Normalized Cross-Correlation (ZNCC) between a template
     and an image patch.
 
-    Args:
-        template (np.ndarray): The template image or signal.
-        image_patch (np.ndarray): The image patch or signal to compare with the template.
+    Parameters
+    ----------
+    template : np.ndarray
+        The template image or signal.
+    image_patch : np.ndarray
+        The image patch or signal to compare with the template.
 
-    Returns:
+    Returns
+    -------
         float: The ZNCC score, a scalar value between -1 and 1.
                1 indicates a perfect match, -1 indicates a perfect mismatch,
                and 0 indicates no correlation.
@@ -5323,3 +5332,40 @@ def zncc(template, image_patch):
     )  # template.size is equivalent to N in the formula
 
     return numerator / denominator
+
+
+def coreg(reference: str, targets: list[str], **kwargs) -> tuple:
+    """Wrapper for the co_register function to re-run with Laplacian filter if any targets failed.
+    Parameters
+    ----------
+    reference : str
+        Path to the reference image.
+    targets : list[str]
+        List of paths to the target images.
+    **kwargs
+        Additional keyword arguments to pass to the co_register function.
+    """
+
+    _, shifts, target_ids = co_register(
+        reference,
+        targets,
+        **kwargs,
+        no_export_when_any_failed=True,
+    )
+
+    failed_targets = [i for i in range(len(targets)) if i not in target_ids]
+
+    if len(failed_targets) > 0:
+        print("Re-running co-registration with Laplacian filter for failed targets")
+        print("\r")
+
+        shutil.rmtree(kwargs.get("output_path"), ignore_errors=True)
+        laplacian_for_targets_ids = failed_targets
+
+        _, shifts, target_ids = co_register(
+            reference,
+            targets,
+            **kwargs,
+            laplacian_for_targets_ids=laplacian_for_targets_ids,
+        )
+    return shifts, target_ids
