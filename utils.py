@@ -5384,12 +5384,12 @@ def coreg(reference: str, targets: list[str], **kwargs) -> tuple:
         print("\r")
 
         shutil.rmtree(kwargs.get("output_path"), ignore_errors=True)
-        laplacian_for_targets_ids = failed_targets
 
         _, shifts, target_ids = co_register(
             reference,
             targets,
             **kwargs,
-            laplacian_for_targets_ids=laplacian_for_targets_ids,
+            laplacian_kernel_size=kwargs.get("laplacian_kernel_size", 5),
+            laplacian_for_targets_ids=failed_targets,
         )
     return shifts, target_ids
