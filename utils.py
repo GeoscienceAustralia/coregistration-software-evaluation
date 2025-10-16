@@ -4887,9 +4887,6 @@ def combine_comparison_results(
     except:
         print("Co-Register results not found, skipping.")
 
-    if coreg_default_params is None:
-        coreg_default_params = [True] * len(coreg_df)
-
     try:
         karios_df = pd.read_csv(f"{root_output}/Karios{dir_suffix}/output.csv")
         karios_df["Method"] = ["Karios"] * len(karios_df)
