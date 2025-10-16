@@ -787,9 +787,6 @@ def find_overlap(
         if (raster_1_px_size != raster_2_px_size) or (
             raster_1_py_size != raster_2_py_size
         ):
-            print(
-                f"WARNING: Ground resolutions are different for the provided images. Setting them to the {resampling_resolution} resolution.\n"
-            )
 
             os.makedirs("temp", exist_ok=True)
             outputs = adjust_resolutions(
@@ -1733,6 +1730,7 @@ def warp_affine_dataset(
     rotation_angle: float = 0.0,
     scale: float = 1.0,
     write_new_transform: bool = False,  # if writing to an output file, changes the transform of the profile instead of shifting image pixels.
+    affine_matrix: np.ndarray = None,
 ) -> np.ndarray:
     """
     Transforms the dataset accroding to given translation, rotation and scale params and writes it to the `output_path` file.
@@ -1754,6 +1752,8 @@ def warp_affine_dataset(
     write_new_transform : bool, optional
         If True, the new affine transformation will be written to the output file's profile.
         If False, the image pixels will be shifted according to the translation parameters, by default False
+    affine_matrix : np.ndarray, optional
+        A 2x3 affine transformation matrix. If provided, this matrix will be used for the transformation instead of calculating it from translation, rotation, and scale parameters.
 
     Returns
     -------
@@ -1772,6 +1772,8 @@ def warp_affine_dataset(
     affine_transform = np.matmul(
         rotation_mat, np.vstack([translation_mat, np.array([0, 0, 1])])
     )
+    if affine_matrix is not None:
+        affine_transform = affine_matrix
     warped_img = cv.warpAffine(img, affine_transform, (img.shape[1], img.shape[0]))
 
     if (type(dataset) == str) and (output_path != ""):
@@ -2046,6 +2048,7 @@ def co_register(
     lower_of_dist_thresh: Union[None, int, float] = None,
     band_number: Union[None, int] = None,
     no_export_when_any_failed: bool = False,
+    affine_transform_targets: bool = False,
 ) -> tuple:
     """
     Co-registers the target images to the reference image using optical flow and phase correlation.
@@ -2093,6 +2096,8 @@ def co_register(
         Band number to use for the target images, by default None (use all bands). If specified, it will select the band from the target images.
     no_export_when_any_failed: bool, Optional
         If True, no output will be exported if any target image fails to co-register, by default False.
+    affine_transform_targets: bool, Optional
+        If True, applies the affine transformation to the target images instead of translation by mean shifts, by default False.
 
     Returns
     -------
@@ -2369,6 +2374,14 @@ def co_register(
             shifts.append(
                 (shift_x / scale_factors[i][1], shift_y / scale_factors[i][0])
             )
+
+            if affine_transform_targets:
+                tgt_good_temp[:, 0] = tgt_good_temp[:, 0] / scale_factors[i][1]
+                tgt_good_temp[:, 1] = tgt_good_temp[:, 1] / scale_factors[i][0]
+                ref_good_temp[:, 0] = ref_good_temp[:, 0] / scale_factors[i][1]
+                ref_good_temp[:, 1] = ref_good_temp[:, 1] / scale_factors[i][0]
+                affine_matrix, _ = cv.estimateAffine2D(tgt_good_temp, ref_good_temp)
+
             process_ids.append(i)
 
             if export_outputs:
@@ -2380,6 +2393,7 @@ def co_register(
                     out_path,
                     translation_x=shift_x / scale_factors[i][1],
                     translation_y=shift_y / scale_factors[i][0],
+                    affine_matrix=affine_matrix if affine_transform_targets else None,
                 )
                 processed_tgt_images.append(targets[i])
                 processed_output_images.append(out_path)
@@ -3804,6 +3818,7 @@ def karios(
     tgt_images: list[str],
     output_dir: str,
     karios_executable: str = "karios",
+    fps: int = 3,
 ) -> tuple:
     """Runs Karios coregistration on the provided reference and target images.
 
@@ -3817,6 +3832,8 @@ def karios(
         Output directory where the aligned images will be saved.
     karios_executable : str
         Path to the Karios executable. Default is 'karios'.
+    fps : int, optional
+        Frames per second for the output GIFs, by default 3.
 
     Returns
     -------
@@ -3912,6 +3929,7 @@ def karios(
         shifts=final_shifts,
         run_time=run_time,
         target_ids=target_ids,
+        gif_fps=fps,
     )
     full_time = time.time() - full_start
     print(f"Run time: {run_time} seconds")
@@ -3936,6 +3954,7 @@ def arosics(
     rs_tolerance: float = 2.5,
     existing_ref_image: str | None = None,
     existing_tgt_images: list[str] | None = None,
+    fps: int = 3,
 ) -> tuple:
     """Runs AROSICS coregistration on the provided reference and target images.
 
@@ -3971,6 +3990,8 @@ def arosics(
         Existing reference image to force reference bounding box, by default None
     existing_tgt_images : list[str] | None, optional
         Existing target images to force target bounding boxes, by default None
+    fps : int, optional
+        Frames per second for the output GIFs, by default 3.
 
     Returns
     -------
@@ -4069,6 +4090,7 @@ def arosics(
         shifts=shifts,
         run_time=run_time,
         target_ids=target_ids,
+        gif_fps=fps,
     )
     full_time = time.time() - full_start
     print(f"Run time: {run_time} seconds")
