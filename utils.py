@@ -5366,7 +5366,7 @@ def coreg(
     **kwargs,
 ) -> tuple:
     """
-    Wrapper for the co_register function to re-run with Laplacian filter if any targets failed.
+    Wrapper for the co-registration functions.
 
     Parameters
     ----------
