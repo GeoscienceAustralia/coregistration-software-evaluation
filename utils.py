@@ -2001,7 +2001,7 @@ def filter_features(
             info_str = ""
             if target_info is not None:
                 info_str = f"For target {target_info[0]} ({target_info[1]}), "
-            print(info_str + "Couldn't find valid features for target or reference.")
+            print(info_str + "All features removed as outliers.")
             return None, None
 
         tgt_good = np.expand_dims(tgt_good[valid_idx], axis=0)
@@ -5356,7 +5356,13 @@ def zncc(template: np.ndarray, image_patch: np.ndarray) -> float:
     return numerator / denominator
 
 
-def coreg(reference: str, targets: list[str], **kwargs) -> tuple:
+def coreg(
+    reference: str,
+    targets: list[str],
+    output_dir: str,
+    method: Literal["co_register", "karios", "arosics"] = "co_register",
+    **kwargs,
+) -> tuple:
     """
     Wrapper for the co_register function to re-run with Laplacian filter if any targets failed.
 
@@ -5366,30 +5372,54 @@ def coreg(reference: str, targets: list[str], **kwargs) -> tuple:
         Path to the reference image.
     targets : list[str]
         List of paths to the target images.
+    method : Literal["co_register", "karios", "arosics"]
+        The method to use for co-registration.
     **kwargs
-        Additional keyword arguments to pass to the `co_register` function.
+        Additional keyword arguments to pass to the `method` function.
     """
 
-    _, shifts, target_ids = co_register(
-        reference,
-        targets,
-        **kwargs,
-        no_export_when_any_failed=True,
-    )
-
-    failed_targets = [i for i in range(len(targets)) if i not in target_ids]
-
-    if len(failed_targets) > 0:
-        print("Re-running co-registration with Laplacian filter for failed targets")
-        print("\r")
-
-        shutil.rmtree(kwargs.get("output_path"), ignore_errors=True)
-
+    method = method.lower()
+    if method == "co_register":
         _, shifts, target_ids = co_register(
             reference,
             targets,
+            output_path=output_dir,
             **kwargs,
-            laplacian_kernel_size=kwargs.get("laplacian_kernel_size", 5),
-            laplacian_for_targets_ids=failed_targets,
+            no_export_when_any_failed=True,
+        )
+
+        failed_targets = [i for i in range(len(targets)) if i not in target_ids]
+
+        if len(failed_targets) > 0:
+            print("Re-running co-registration with Laplacian filter for failed targets")
+            print("\r")
+
+            shutil.rmtree(kwargs.get("output_path"), ignore_errors=True)
+
+            _, shifts, target_ids = co_register(
+                reference,
+                targets,
+                output_path=output_dir,
+                **kwargs,
+                laplacian_kernel_size=kwargs.get("laplacian_kernel_size", 5),
+                laplacian_for_targets_ids=failed_targets,
+            )
+    elif method == "karios":
+        shifts, target_ids = karios(
+            reference,
+            targets,
+            output_dir,
+            **kwargs,
+        )
+    elif method == "arosics":
+        shifts, target_ids = arosics(
+            reference,
+            targets,
+            output_dir,
+            **kwargs,
+        )
+    else:
+        raise ValueError(
+            f"Method {method} not recognized. Use 'co_register', 'karios', or 'arosics'."
         )
     return shifts, target_ids
