@@ -3819,6 +3819,7 @@ def karios(
     output_dir: str,
     karios_executable: str = "karios",
     fps: int = 3,
+    scan_big_shifts: bool = False,
 ) -> tuple:
     """Runs Karios coregistration on the provided reference and target images.
 
@@ -3834,6 +3835,8 @@ def karios(
         Path to the Karios executable. Default is 'karios'.
     fps : int, optional
         Frames per second for the output GIFs, by default 3.
+    scan_big_shifts : bool, optional
+        Whether to scan for big shifts, by default False.
 
     Returns
     -------
@@ -3875,6 +3878,8 @@ def karios(
     for i, tgt_image in enumerate(tgt_images_copy):
         try:
             cmd = f"{karios_executable} process {tgt_image} {ref_image} --out {output_dir} --log-file-path {log_file} "
+            if scan_big_shifts:
+                cmd += "--enable-large-shift-detection "
             print(f"Running {cmd}")
             run(shlex.split(cmd))
         except Exception as e:
