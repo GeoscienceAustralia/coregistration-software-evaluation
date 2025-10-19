@@ -2431,10 +2431,10 @@ def co_register(
 
 def apply_gamma(
     data,
-    gamma=0.5,
+    gamma=1.0,
     stretch_hist: bool = False,
     adjust_hist: bool = False,
-    min_max: bool = True,
+    min_max: bool = False,
     output_type: str = "uint8",
 ) -> np.ndarray:
     """Applies image enhancement using gamma correction and optional histogram adjustments.
@@ -2444,7 +2444,7 @@ def apply_gamma(
     data : np.ndarray
         Data to be enhanced, typically a numpy array representing an image.
     gamma : float, optional
-        Gamma value for correction, by default 0.5
+        Gamma value for correction, by default 1.0
     stretch_hist : bool, optional
         Histogram stretching flag, by default False
     adjust_hist : bool, optional
@@ -2462,11 +2462,11 @@ def apply_gamma(
     data = np.power(data, gamma)
     if adjust_hist:
         data = equalize_hist(data)
+    if min_max:
+        data = (data / data.max()) * 255.0
     if stretch_hist:
         p2, p98 = np.percentile(data, (2, 98))
         data = rescale_intensity(data, in_range=(p2, p98), out_range="uint8")
-    elif min_max:
-        data *= 255 / data.max()
     return data.astype(output_type)
 
 
@@ -2844,7 +2844,7 @@ def make_composite_scene(
     post_process_only: bool = False,
     reference_band_number: Literal[1, 2, 3] | None = None,
     preserve_depth: bool = False,
-    min_max_scaling: bool = True,
+    min_max_scaling: bool = False,
     three_channel: bool = False,
     remove_nans: bool = False,
     fill_nodata: bool = False,
@@ -2880,7 +2880,7 @@ def make_composite_scene(
     preserve_depth : bool, optional
         Preserve the depth of the image, by default False.
     min_max_scaling : bool, optional
-        Apply min-max scaling to the image, by default True.
+        Apply min-max scaling to the image, by default False.
     three_channel : bool, optional
         If True, the output image will be a 3-channel image, by default False.
     remove_nans : bool, optional
@@ -2942,10 +2942,6 @@ def make_composite_scene(
         if remove_nans:
             band_imgs = [np.nan_to_num(b, nan=0) for b in band_imgs]
 
-        if not preserve_depth:
-            band_imgs = [np.clip(b / 256, 0, 255).astype("uint8") for b in band_imgs]
-            profile["dtype"] = "uint8"
-
         if three_channel:
             profile["count"] = 3
             if len(band_imgs) == 1:
@@ -2978,7 +2974,7 @@ def make_composite_scene(
                 )
             img = cv.cvtColor(img, cv.COLOR_BGR2GRAY)
 
-    if preserve_depth:
+    if preserve_depth and not stretch_contrast:
         output_type = img.dtype
     else:
         output_type = "uint8"
@@ -4146,7 +4142,7 @@ def process_existing_outputs(
     subdir: str = "true_colour",
     force_reprocess: bool = False,
     preserve_depth: bool = False,
-    min_max_scaling: bool = True,
+    min_max_scaling: bool = False,
     three_channel: bool = False,
     remove_nans: bool = False,
     scale_factor: float = 0.2,
@@ -4186,7 +4182,7 @@ def process_existing_outputs(
     preserve_depth : bool, optional
         Preserve the depth of the original images, by default False
     min_max_scaling : bool, optional
-        Use min-max scaling for the images, by default True
+        Use min-max scaling for the images, by default False
     three_channel : bool, optional
         If True, the composite image will have three channels, by default False
     remove_nans : bool, optional
@@ -4372,7 +4368,7 @@ def download_and_process_series(
     scale_factor: float | list[float] = 0.2,
     scene_name_map: Callable | None = None,
     preserve_depth: bool = False,
-    min_max_scaling: bool = True,
+    min_max_scaling: bool = False,
     extra_bands: list[str] | None = None,
     three_channel: bool = False,
     remove_nans: bool = False,
@@ -4432,7 +4428,7 @@ def download_and_process_series(
     preserve_depth : bool, optional
         Preserve the depth of the original images, by default False
     min_max_scaling : bool, optional
-        Use min-max scaling for the images, by default True
+        Use min-max scaling for the images, by default False
         `stretch_contrast` will override this setting if enabled.
     extra_bands : list[str] | None, optional
         Additional bands to be downloaded, by default None
