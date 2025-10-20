@@ -2793,6 +2793,7 @@ def get_search_query(
         If True, returns a query suitable for pystac, by default False
     extra_query : dict | None, optional
         Additional query parameters to include in the search, by default None
+        For example: `{'ids': ['LC08_L1TP_023030_20191215_20200905_02_T1']}`
 
     Returns
     -------
