@@ -2503,6 +2503,8 @@ def query_stac_server(
         Filters items without the provided pattern out.
     modifier : Any, optional
         Modifier for the query, by default None.
+        For example, use `planetary_computer.sign_inplace` when querying
+        Microsoft's Planetary Computer STAC server.
     """
 
     if use_pystac:
