@@ -2498,6 +2498,7 @@ def query_stac_server(
         If True, returns pystac items instead of raw features, by default False.
     max_cloud_cover : float, optional
         Maximum cloud cover percentage to filter items, by default None
+        Only used when `use_pystac` is True.
     id_filter: str | None = None,
         Filters items without the provided pattern out.
     modifier : Any, optional
@@ -2785,6 +2786,7 @@ def get_search_query(
         End date for the search, by default "2015-01-23T23:59:59"
     cloud_cover : int | None, optional
         Cloud cover percentage to filter by, by default 80
+        Only used when `pystac_query` is False.
     pystac_query : bool, optional
         If True, returns a query suitable for pystac, by default False
     extra_query : dict | None, optional
