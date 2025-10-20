@@ -2477,6 +2477,7 @@ def query_stac_server(
     return_pystac_items: bool = False,
     max_cloud_cover: float | None = None,
     id_filter: str | None = None,
+    modifier: Any = None,
 ) -> list | pystac.ItemCollection:
     """
     Queries the stac-server (STAC) backend.
@@ -2499,10 +2500,15 @@ def query_stac_server(
         Maximum cloud cover percentage to filter items, by default None
     id_filter: str | None = None,
         Filters items without the provided pattern out.
+    modifier : Any, optional
+        Modifier for the query, by default None.
     """
 
     if use_pystac:
-        client = Client.open(server_url)
+        if not modifier:
+            client = Client.open(server_url)
+        else:
+            client = Client.open(server_url, modifier=modifier)
         search = client.search(**query)
         items = search.item_collection()
 
