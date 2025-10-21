@@ -2766,7 +2766,7 @@ def get_search_query(
     platform: str | list | None = "LANDSAT_8",
     start_date: str = "2014-10-30T00:00:00",
     end_date: str = "2015-01-23T23:59:59",
-    cloud_cover: int | None = 80,
+    cloud_cover: int | None = None,
     pystac_query: bool = False,
     extra_query: dict | None = None,
 ) -> dict:
