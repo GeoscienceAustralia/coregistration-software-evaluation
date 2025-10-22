@@ -3951,8 +3951,8 @@ def karios(
                                 scene_names.append(tgt_image)
                                 shifts.append(
                                     [
-                                        float(splits[-3]) / scale_factors[i][0],
-                                        float(splits[-1]) / scale_factors[i][1],
+                                        float(splits[-3]) / scale_factors[i][1],
+                                        float(splits[-1]) / scale_factors[i][0],
                                     ]
                                 )
                                 target_ids.append(i)
