@@ -1934,7 +1934,7 @@ def filter_features(
     dist_thresh: Union[None, int, float] = None,
     lower_of_dist_thresh: Union[None, int, float] = None,
     target_info: Union[None, tuple] = None,
-    distance_per_direction: bool = False,
+    directional_filtering: bool = False,
 ) -> tuple:
     """Filters the reference and target points based on distance thresholds and image validity.
 
@@ -1958,7 +1958,7 @@ def filter_features(
         Lower threshold for filtering points based on distance, by default None
     target_info : Union[None, tuple], optional
         Information about the target, used for logging if no valid features are found, by default None
-    distance_per_direction : bool, optional
+    directional_filtering : bool, optional
         If True, distance filtering is done per direction, by default False
 
     Returns
@@ -1969,7 +1969,7 @@ def filter_features(
     """
 
     if dist_thresh != None:
-        if distance_per_direction:
+        if directional_filtering:
             dists = np.abs(ref_points - tgt_points)
             dists_x = dists[:, 0]
             dists_y = dists[:, 1]
@@ -2069,7 +2069,7 @@ def co_register(
     band_number: Union[None, int] = None,
     no_export_when_any_failed: bool = False,
     affine_transform_targets: bool = False,
-    distance_per_direction: bool = False,
+    directional_filtering: bool = False,
     no_ransac: bool = False,
 ) -> tuple:
     """
@@ -2120,7 +2120,7 @@ def co_register(
         If True, no output will be exported if any target image fails to co-register, by default False.
     affine_transform_targets: bool, Optional
         If True, applies the affine transformation to the target images instead of translation by mean shifts, by default False.
-    distance_per_direction: bool, Optional
+    directional_filtering: bool, Optional
         If True, filters distance per direction (x and y) instead of Euclidean distance, by default False.
     no_ransac: bool, Optional
         If True, skips the RANSAC step for outlier removal, by default False.
@@ -2338,7 +2338,7 @@ def co_register(
                 of_dist_thresh,
                 lower_of_dist_thresh,
                 (i, os.path.basename(targets[i])),
-                distance_per_direction,
+                directional_filtering,
             )
 
             if tgt_good is None:
