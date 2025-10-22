@@ -1970,20 +1970,20 @@ def filter_features(
 
     if dist_thresh != None:
         if distance_per_direction:
-            dists = ref_points - tgt_points
+            dists = np.abs(ref_points - tgt_points)
             dists_x = dists[:, 0]
             dists_y = dists[:, 1]
             if lower_of_dist_thresh != None:
-                upper_idx_x = np.squeeze(np.abs(dists_x)) < dist_thresh
-                lower_idx_x = np.squeeze(np.abs(dists_x)) > lower_of_dist_thresh
-                upper_idx_y = np.squeeze(np.abs(dists_y)) < dist_thresh
-                lower_idx_y = np.squeeze(np.abs(dists_y)) > lower_of_dist_thresh
+                upper_idx_x = np.squeeze(dists_x) < dist_thresh
+                lower_idx_x = np.squeeze(dists_x) > lower_of_dist_thresh
+                upper_idx_y = np.squeeze(dists_y) < dist_thresh
+                lower_idx_y = np.squeeze(dists_y) > lower_of_dist_thresh
                 filter_idx_x = np.where(np.logical_and(upper_idx_x, lower_idx_x))
                 filter_idx_y = np.where(np.logical_and(upper_idx_y, lower_idx_y))
                 filter_idx = np.intersect1d(filter_idx_x, filter_idx_y)
             else:
-                filter_idx_x = np.where(np.squeeze(np.abs(dists_x)) < dist_thresh)
-                filter_idx_y = np.where(np.squeeze(np.abs(dists_y)) < dist_thresh)
+                filter_idx_x = np.where(np.squeeze(dists_x) < dist_thresh)
+                filter_idx_y = np.where(np.squeeze(dists_y) < dist_thresh)
                 filter_idx = np.intersect1d(filter_idx_x, filter_idx_y)
         else:
             if lower_of_dist_thresh != None:
