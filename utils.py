@@ -552,8 +552,8 @@ def downsample_dataset(
 
         if len(force_shape) != 0:
             scale_factor = [
-                force_shape[0] / scale_factor[0],
-                force_shape[1] / scale_factor[1],
+                force_shape[0] / dataset.height,
+                force_shape[1] / dataset.width,
             ]
 
         if readjust_origin:
@@ -572,7 +572,7 @@ def downsample_dataset(
             for i in range(0, profile["count"]):
                 ds.write(data[i], i + 1)
 
-    return data, transform
+    return data, transform if len(force_shape) == 0 else (transform, scale_factor)
 
 
 def enhance_color_matching(data, uint16: bool = False):
@@ -3857,6 +3857,8 @@ def karios(
     os.makedirs(temp_dir, exist_ok=True)
     ref_profile = rasterio.open(ref_image).profile
     tgt_profiles = [rasterio.open(t).profile for t in tgt_images_copy]
+    ds_profiles = tgt_profiles.copy()
+    scale_factors = [[1.0, 1.0]] * len(tgt_images)
     for i, tgt_profile in enumerate(tgt_profiles):
         downsample = False
         if tgt_profile["height"] != ref_profile["height"]:
@@ -3870,14 +3872,17 @@ def karios(
             )
             downsample = True
         if downsample:
-            downsample_dataset(
+            os.makedirs(f"{output_dir}/downsampled", exist_ok=True)
+            _, (_, scale_factor) = downsample_dataset(
                 tgt_images_copy[i],
                 force_shape=(ref_profile["height"], ref_profile["width"]),
-                output_file=f"{output_dir}/temp/{os.path.basename(tgt_images_copy[i])}",
+                output_file=f"{output_dir}/downsampled/{os.path.basename(tgt_images_copy[i])}",
             )
             tgt_images_copy[i] = (
-                f"{output_dir}/temp/{os.path.basename(tgt_images_copy[i])}"
+                f"{output_dir}/downsampled/{os.path.basename(tgt_images_copy[i])}"
             )
+            ds_profiles[i] = rasterio.open(tgt_images_copy[i]).profile
+            scale_factors[i] = scale_factor
 
     log_file = f"{output_dir}/karios.log"
     if os.path.isfile(log_file):
@@ -3906,13 +3911,52 @@ def karios(
                 if (os.path.basename(tgt_image) in line) and ("Process" in line):
                     line_found = True
                 if line_found:
-                    if "DX/DY(KLT) MEAN" in line:
-                        splits = line.strip().split(" ")
-                        if splits[-3] != "nan" or splits[-1] != "nan":
-                            scene_names.append(tgt_image)
-                            shifts.append([float(splits[-3]), float(splits[-1])])
-                            target_ids.append(i)
-                        break
+                    if scan_big_shifts:
+                        if "Large offset found:" in line:
+                            splits = line.strip().split(" ")
+                            if splits[-4] != "nan" or splits[-1] != "nan":
+                                scene_names.append(tgt_image)
+                                shifts.append(
+                                    [
+                                        (
+                                            float(splits[-1].split("]")[0])
+                                            - (
+                                                (
+                                                    ref_profile["transform"].c
+                                                    - ds_profiles[i]["transform"].c
+                                                )
+                                                / ref_profile["transform"].a
+                                            )
+                                        )
+                                        / scale_factors[i][1],
+                                        (
+                                            float(splits[-4].split("[")[1])
+                                            - (
+                                                (
+                                                    ref_profile["transform"].f
+                                                    - ds_profiles[i]["transform"].f
+                                                )
+                                                / ref_profile["transform"].e
+                                            )
+                                        )
+                                        / scale_factors[i][0],
+                                    ]
+                                )
+                                target_ids.append(i)
+                            break
+                    else:
+                        if "DX/DY(KLT) MEAN" in line:
+                            splits = line.strip().split(" ")
+                            if splits[-3] != "nan" or splits[-1] != "nan":
+                                scene_names.append(tgt_image)
+                                shifts.append(
+                                    [
+                                        float(splits[-3]) / scale_factors[i][0],
+                                        float(splits[-1]) / scale_factors[i][1],
+                                    ]
+                                )
+                                target_ids.append(i)
+                            break
 
     shifts_dict = {}
     for f, sh in zip(scene_names, shifts):
