@@ -1934,6 +1934,7 @@ def filter_features(
     dist_thresh: Union[None, int, float] = None,
     lower_of_dist_thresh: Union[None, int, float] = None,
     target_info: Union[None, tuple] = None,
+    distance_per_direction: bool = False,
 ) -> tuple:
     """Filters the reference and target points based on distance thresholds and image validity.
 
@@ -1957,6 +1958,8 @@ def filter_features(
         Lower threshold for filtering points based on distance, by default None
     target_info : Union[None, tuple], optional
         Information about the target, used for logging if no valid features are found, by default None
+    distance_per_direction : bool, optional
+        If True, distance filtering is done per direction, by default False
 
     Returns
     -------
@@ -1966,12 +1969,29 @@ def filter_features(
     """
 
     if dist_thresh != None:
-        if lower_of_dist_thresh != None:
-            upper_idx = np.squeeze(dists) < dist_thresh
-            lower_idx = np.squeeze(dists) > lower_of_dist_thresh
-            filter_idx = np.where(np.logical_and(upper_idx, lower_idx))
+        if distance_per_direction:
+            dists = ref_points - tgt_points
+            dists_x = dists[:, 0]
+            dists_y = dists[:, 1]
+            if lower_of_dist_thresh != None:
+                upper_idx_x = np.squeeze(np.abs(dists_x)) < dist_thresh
+                lower_idx_x = np.squeeze(np.abs(dists_x)) > lower_of_dist_thresh
+                upper_idx_y = np.squeeze(np.abs(dists_y)) < dist_thresh
+                lower_idx_y = np.squeeze(np.abs(dists_y)) > lower_of_dist_thresh
+                filter_idx_x = np.where(np.logical_and(upper_idx_x, lower_idx_x))
+                filter_idx_y = np.where(np.logical_and(upper_idx_y, lower_idx_y))
+                filter_idx = np.intersect1d(filter_idx_x, filter_idx_y)
+            else:
+                filter_idx_x = np.where(np.squeeze(np.abs(dists_x)) < dist_thresh)
+                filter_idx_y = np.where(np.squeeze(np.abs(dists_y)) < dist_thresh)
+                filter_idx = np.intersect1d(filter_idx_x, filter_idx_y)
         else:
-            filter_idx = np.where(np.squeeze(dists) < dist_thresh)
+            if lower_of_dist_thresh != None:
+                upper_idx = np.squeeze(dists) < dist_thresh
+                lower_idx = np.squeeze(dists) > lower_of_dist_thresh
+                filter_idx = np.where(np.logical_and(upper_idx, lower_idx))
+            else:
+                filter_idx = np.where(np.squeeze(dists) < dist_thresh)
         ref_good = np.squeeze(ref_points)[filter_idx]
         tgt_good = np.squeeze(tgt_points)[filter_idx]
 
@@ -2049,6 +2069,8 @@ def co_register(
     band_number: Union[None, int] = None,
     no_export_when_any_failed: bool = False,
     affine_transform_targets: bool = False,
+    distance_per_direction: bool = False,
+    no_ransac: bool = False,
 ) -> tuple:
     """
     Co-registers the target images to the reference image using optical flow and phase correlation.
@@ -2098,6 +2120,10 @@ def co_register(
         If True, no output will be exported if any target image fails to co-register, by default False.
     affine_transform_targets: bool, Optional
         If True, applies the affine transformation to the target images instead of translation by mean shifts, by default False.
+    distance_per_direction: bool, Optional
+        If True, filters distance per direction (x and y) instead of Euclidean distance, by default False.
+    no_ransac: bool, Optional
+        If True, skips the RANSAC step for outlier removal, by default False.
 
     Returns
     -------
@@ -2312,6 +2338,7 @@ def co_register(
                 of_dist_thresh,
                 lower_of_dist_thresh,
                 (i, os.path.basename(targets[i])),
+                distance_per_direction,
             )
 
             if tgt_good is None:
@@ -2326,13 +2353,15 @@ def co_register(
                 )
                 all_successful = False
                 continue
-            _, inliers = cv.estimateAffine2D(tgt_good, ref_good)
 
-            print("Applying RANSAC filter....")
             ref_good_temp = ref_good.copy()[0, :, :]
             tgt_good_temp = tgt_good.copy()[0, :, :]
-            ref_good_temp = ref_good_temp[inliers.ravel().astype(bool)]
-            tgt_good_temp = tgt_good_temp[inliers.ravel().astype(bool)]
+
+            if not no_ransac:
+                _, inliers = cv.estimateAffine2D(tgt_good, ref_good)
+                print("Applying RANSAC filter....")
+                ref_good_temp = ref_good_temp[inliers.ravel().astype(bool)]
+                tgt_good_temp = tgt_good_temp[inliers.ravel().astype(bool)]
 
             if len(tgt_good_temp) == 0:
                 print(
