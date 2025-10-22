@@ -1970,6 +1970,7 @@ def filter_features(
 
     if dist_thresh != None:
         if directional_filtering:
+            print("Applying directional filtering to feature points...")
             dists = np.abs(ref_points - tgt_points)
             dists_x = dists[:, 0]
             dists_y = dists[:, 1]
@@ -2321,7 +2322,7 @@ def co_register(
                 **of_params["lk_params"],
                 criteria=criteria,
             )
-            dist = np.linalg.norm(p1[st == 1] - p0[st == 1], axis=1)
+            dists = np.linalg.norm(p1[st == 1] - p0[st == 1], axis=1)
 
             print(
                 f"For target {i} ({os.path.basename(targets[i])}), found {len(p0[st == 1])} initial features."
@@ -2334,7 +2335,7 @@ def co_register(
                 ref_img,
                 tgt_img,
                 tgt_img.shape,
-                dist,
+                dists,
                 of_dist_thresh,
                 lower_of_dist_thresh,
                 (i, os.path.basename(targets[i])),
