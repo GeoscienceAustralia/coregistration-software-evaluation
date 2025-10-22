@@ -3944,37 +3944,71 @@ def karios(
                 if (os.path.basename(tgt_image) in line) and ("Process" in line):
                     line_found = True
                 if line_found:
-                    if "Easting displacement (meter):" in line:
-                        mean_e_found = True
-                    if mean_e_found and "Mean :" in line:
-                        splits = line.strip().split(" ")
-                        if splits[2] != "nan":
-                            shift_x = float(splits[2])
-                        mean_e_found = False
-                    if "Northing displacement (meter):" in line:
-                        mean_n_found = True
-                    if mean_n_found and "Mean :" in line:
-                        splits = line.strip().split(" ")
-                        if splits[2] != "nan":
-                            shift_y = float(splits[2])
-                        mean_n_found = False
-                        scene_names.append(tgt_image)
-                        shifts.append(
-                            [
-                                shift_x
-                                / (
-                                    scale_factors[i][1]
-                                    * abs(ds_profiles[i]["transform"].a)
-                                ),
-                                shift_y
-                                / (
-                                    scale_factors[i][0]
-                                    * abs(ds_profiles[i]["transform"].e)
-                                ),
-                            ]
-                        )
-                        target_ids.append(i)
-                        break
+                    if scan_big_shifts:
+                        if "Large offset found:" in line:
+                            splits = line.strip().split(" ")
+                            if splits[-4] != "nan" or splits[-1] != "nan":
+                                scene_names.append(tgt_image)
+                                shifts.append(
+                                    [
+                                        (
+                                            float(splits[-1].split("]")[0])
+                                            - (
+                                                (
+                                                    ref_profile["transform"].c
+                                                    - ds_profiles[i]["transform"].c
+                                                )
+                                                / ref_profile["transform"].a
+                                            )
+                                        )
+                                        / scale_factors[i][1],
+                                        (
+                                            float(splits[-4].split("[")[1])
+                                            - (
+                                                (
+                                                    ref_profile["transform"].f
+                                                    - ds_profiles[i]["transform"].f
+                                                )
+                                                / ref_profile["transform"].e
+                                            )
+                                        )
+                                        / scale_factors[i][0],
+                                    ]
+                                )
+                                target_ids.append(i)
+                            break
+                    else:
+                        if "Easting displacement (meter):" in line:
+                            mean_e_found = True
+                        if mean_e_found and "Mean :" in line:
+                            splits = line.strip().split(" ")
+                            if splits[2] != "nan":
+                                shift_x = float(splits[2])
+                            mean_e_found = False
+                        if "Northing displacement (meter):" in line:
+                            mean_n_found = True
+                        if mean_n_found and "Mean :" in line:
+                            splits = line.strip().split(" ")
+                            if splits[2] != "nan":
+                                shift_y = float(splits[2])
+                            mean_n_found = False
+                            scene_names.append(tgt_image)
+                            shifts.append(
+                                [
+                                    shift_x
+                                    / (
+                                        scale_factors[i][1]
+                                        * abs(ds_profiles[i]["transform"].a)
+                                    ),
+                                    shift_y
+                                    / (
+                                        scale_factors[i][0]
+                                        * abs(ds_profiles[i]["transform"].e)
+                                    ),
+                                ]
+                            )
+                            target_ids.append(i)
+                            break
 
     shifts_dict = {}
     for f, sh in zip(scene_names, shifts):
