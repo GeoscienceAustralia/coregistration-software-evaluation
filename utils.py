@@ -1333,7 +1333,7 @@ def make_difference_gif(
     font = cv.FONT_HERSHEY_SIMPLEX
     if mosaic_scenes:
         _, warps, _ = make_mosaic(
-            images_list,
+            temp_paths,
             mosaic_offsets_x,
             mosaic_offsets_y,
             return_warps=True,
