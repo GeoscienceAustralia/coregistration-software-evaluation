@@ -2073,7 +2073,7 @@ def co_register(
     affine_transform_targets: bool = False,
     directional_filtering: bool = False,
     no_ransac: bool = False,
-    shift_method: Literal["mean", "mode"] = "mean",
+    shift_method: Literal["mean", "mode", "percentile"] = "mean",
 ) -> tuple:
     """
     Co-registers the target images to the reference image using optical flow and phase correlation.
@@ -2127,8 +2127,8 @@ def co_register(
         If True, filters distance per direction (x and y) instead of Euclidean distance, by default False.
     no_ransac: bool, Optional
         If True, skips the RANSAC step for outlier removal, by default False.
-    shift_method: Literal["mean", "mode"], Optional
-        Method to calculate the final shift from the valid shifts. Can be "mean" or "mode", by default "mean".
+    shift_method: Literal["mean", "mode", "percentile"], Optional
+        Method to calculate the final shift from the valid shifts. Can be "mean", "mode", or "percentile", by default "mean".
 
     Returns
     -------
@@ -2362,6 +2362,8 @@ def co_register(
             ref_good_temp = ref_good.copy()[0, :, :]
             tgt_good_temp = tgt_good.copy()[0, :, :]
 
+            if shift_method == "percentile":
+                no_ransac = True
             if not no_ransac:
                 _, inliers = cv.estimateAffine2D(tgt_good, ref_good)
                 print("Applying RANSAC filter....")
@@ -2405,6 +2407,10 @@ def co_register(
                     (ref_good_temp[:, 1] - tgt_good_temp[:, 1])[
                         round_points_y == points_mode_y
                     ]
+                )
+            else:  # percentile
+                shift_x, shift_y = np.percentile(
+                    ref_good_temp - tgt_good_temp, 75, axis=0
                 )
 
             num_features = ref_good_temp.shape[0]
