@@ -5529,7 +5529,7 @@ def coreg(
             print("Re-running co-registration with Laplacian filter for failed targets")
             print("\r")
 
-            shutil.rmtree(kwargs.get("output_path"), ignore_errors=True)
+            shutil.rmtree(output_dir, ignore_errors=True)
 
             _, shifts, target_ids = co_register(
                 reference,
