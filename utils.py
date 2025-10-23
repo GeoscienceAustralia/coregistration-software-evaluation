@@ -52,6 +52,7 @@ import multiprocess as mp
 from geojson import loads as gloads
 from dask import optimize
 import copy
+from scipy import stats
 
 
 dbscan = DBSCAN(min_samples=2, eps=0.01)
@@ -2072,6 +2073,7 @@ def co_register(
     affine_transform_targets: bool = False,
     directional_filtering: bool = False,
     no_ransac: bool = False,
+    shift_method: Literal["mean", "mode"] = "mean",
 ) -> tuple:
     """
     Co-registers the target images to the reference image using optical flow and phase correlation.
@@ -2125,6 +2127,8 @@ def co_register(
         If True, filters distance per direction (x and y) instead of Euclidean distance, by default False.
     no_ransac: bool, Optional
         If True, skips the RANSAC step for outlier removal, by default False.
+    shift_method: Literal["mean", "mode"], Optional
+        Method to calculate the final shift from the valid shifts. Can be "mean" or "mode", by default "mean".
 
     Returns
     -------
@@ -2383,7 +2387,26 @@ def co_register(
                     valid_num_points=phase_corr_valid_num_points,
                 )
 
-            shift_x, shift_y = np.mean(ref_good_temp - tgt_good_temp, axis=0)
+            if shift_method == "mean":
+                shift_x, shift_y = np.mean(ref_good_temp - tgt_good_temp, axis=0)
+            elif shift_method == "mode":
+                round_points_x = np.round(ref_good_temp[:, 0] - tgt_good_temp[:, 0])
+                points_mode_x = stats.mode(round_points_x, axis=0).mode
+
+                round_points_y = np.round(ref_good_temp[:, 1] - tgt_good_temp[:, 1])
+                points_mode_y = stats.mode(round_points_y, axis=0).mode
+
+                shift_x = np.mean(
+                    (ref_good_temp[:, 0] - tgt_good_temp[:, 0])[
+                        round_points_x == points_mode_x
+                    ]
+                )
+                shift_y = np.mean(
+                    (ref_good_temp[:, 1] - tgt_good_temp[:, 1])[
+                        round_points_y == points_mode_y
+                    ]
+                )
+
             num_features = ref_good_temp.shape[0]
 
             print(
