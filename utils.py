@@ -5029,7 +5029,7 @@ def combine_comparison_results(
 
     try:
         arosics_edge_df = pd.read_csv(
-            f"{root_output}/AROSICS{dir_suffix}_edge/output.csv"
+            f"{root_output}/AROSICS_edge{dir_suffix}/output.csv"
         )
         arosics_edge_df["Method"] = ["AROSICS Edge"] * len(arosics_edge_df)
         df_list.append(arosics_edge_df)
