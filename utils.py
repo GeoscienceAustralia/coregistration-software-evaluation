@@ -5115,7 +5115,7 @@ def combine_comparison_results(
 
     out_df = pd.DataFrame([target_0, target_1], columns=col_names)
     out_df.to_csv(
-        f"{root_output}/co_registration_results.csv",
+        f"{root_output}/co_registration_results{dir_suffix}.csv",
         index=False,
     )
     return out_df
