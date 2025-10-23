@@ -3970,13 +3970,13 @@ def karios(
                 if line_found:
                     if scan_big_shifts:
                         if "Large offset found:" in line:
-                            splits = line.strip().split(" ")
+                            splits = line.strip().split()
                             if splits[-4] != "nan" or splits[-1] != "nan":
                                 scene_names.append(tgt_image)
                                 shifts.append(
                                     [
                                         (
-                                            float(splits[-1].split("]")[0])
+                                            float(splits[-1].replace("]", ""))
                                             - (
                                                 (
                                                     ref_profile["transform"].c
@@ -3987,7 +3987,7 @@ def karios(
                                         )
                                         / scale_factors[i][1],
                                         (
-                                            float(splits[-4].split("[")[1])
+                                            float(splits[-2].replace("[", ""))
                                             - (
                                                 (
                                                     ref_profile["transform"].f
