@@ -2145,12 +2145,6 @@ def co_register(
 
     run_start = full_start = time.time()
 
-    if shift_method == "big_shifts":
-        print("Large shifts mode is enabled...")
-        directional_filtering = True
-        original_of_dist_thresh = of_dist_thresh
-        original_lower_of_dist_thresh = lower_of_dist_thresh
-
     criteria = (
         cv.TERM_CRITERIA_EPS | cv.TERM_CRITERIA_COUNT,
         number_of_iterations,
