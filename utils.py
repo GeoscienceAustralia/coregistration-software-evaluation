@@ -1933,10 +1933,9 @@ def filter_features(
     bounding_shape: tuple,
     dists: np.ndarray,
     dist_thresh: Union[None, int, float] = None,
-    lower_of_dist_thresh: Union[None, int, float, list] = None,
+    lower_of_dist_thresh: Union[None, int, float] = None,
     target_info: Union[None, tuple] = None,
     directional_filtering: bool = False,
-    big_shifts_detected: tuple = (False, False),
 ) -> tuple:
     """Filters the reference and target points based on distance thresholds and image validity.
 
@@ -1962,8 +1961,6 @@ def filter_features(
         Information about the target, used for logging if no valid features are found, by default None
     directional_filtering : bool, optional
         If True, distance filtering is done per direction, by default False
-    big_shifts_detected : tuple, optional
-        Tuple indicating if big shifts were detected in x and y directions, by default (False, False)
 
     Returns
     -------
@@ -1978,30 +1975,19 @@ def filter_features(
             dists = np.abs(ref_points - tgt_points)
             dists_x = dists[:, 0]
             dists_y = dists[:, 1]
-            if lower_of_dist_thresh != [None, None]:
-                if not big_shifts_detected[0]:
-                    upper_idx_x = np.squeeze(dists_x) < dist_thresh
-                    lower_idx_x = np.squeeze(dists_x) > lower_of_dist_thresh[0]
-                    filter_idx_x = np.where(np.logical_and(upper_idx_x, lower_idx_x))
-                else:
-                    filter_idx_x = np.where(
-                        np.squeeze(dists_x) > lower_of_dist_thresh[0]
-                    )
+            if lower_of_dist_thresh != None:
+                upper_idx_x = np.squeeze(dists_x) < dist_thresh
+                lower_idx_x = np.squeeze(dists_x) > lower_of_dist_thresh
+                filter_idx_x = np.where(np.logical_and(upper_idx_x, lower_idx_x))
 
-                if not big_shifts_detected[1]:
-                    upper_idx_y = np.squeeze(dists_y) < dist_thresh
-                    lower_idx_y = np.squeeze(dists_y) > lower_of_dist_thresh[1]
-                    filter_idx_y = np.where(np.logical_and(upper_idx_y, lower_idx_y))
-                else:
-                    filter_idx_y = np.where(
-                        np.squeeze(dists_y) > lower_of_dist_thresh[1]
-                    )
-
-                filter_idx = np.intersect1d(filter_idx_x, filter_idx_y)
+                upper_idx_y = np.squeeze(dists_y) < dist_thresh
+                lower_idx_y = np.squeeze(dists_y) > lower_of_dist_thresh
+                filter_idx_y = np.where(np.logical_and(upper_idx_y, lower_idx_y))
             else:
                 filter_idx_x = np.where(np.squeeze(dists_x) < dist_thresh)
                 filter_idx_y = np.where(np.squeeze(dists_y) < dist_thresh)
-                filter_idx = np.intersect1d(filter_idx_x, filter_idx_y)
+
+            filter_idx = np.intersect1d(filter_idx_x, filter_idx_y)
         else:
             if lower_of_dist_thresh != None:
                 upper_idx = np.squeeze(dists) < dist_thresh
@@ -2082,7 +2068,7 @@ def co_register(
     resampling_resolution: str = "lower",
     laplacian_kernel_size: Union[None, int, list] = None,
     laplacian_for_targets_ids: list | None = None,
-    lower_of_dist_thresh: Union[None, int, float, list] = None,
+    lower_of_dist_thresh: Union[None, int, float] = None,
     band_number: Union[None, int] = None,
     no_export_when_any_failed: bool = False,
     affine_transform_targets: bool = False,
@@ -2160,14 +2146,10 @@ def co_register(
     run_start = full_start = time.time()
 
     if shift_method == "big_shifts":
-        print(
-            "Using 'big_shifts' method for large shifts. This method is more robust to large displacements."
-        )
+        print("Large shifts mode is enabled...")
         directional_filtering = True
-
-    if directional_filtering and (type(lower_of_dist_thresh) != list):
-        lower_of_dist_thresh = [lower_of_dist_thresh, lower_of_dist_thresh]
-        original_lower_dist_thresh = lower_of_dist_thresh
+        original_of_dist_thresh = of_dist_thresh
+        original_lower_of_dist_thresh = lower_of_dist_thresh
 
     criteria = (
         cv.TERM_CRITERIA_EPS | cv.TERM_CRITERIA_COUNT,
@@ -2342,96 +2324,99 @@ def co_register(
         try:
 
             if shift_method == "big_shifts":
-                big_shifts_detected_x = big_shifts_detected_y = False
-                lower_of_dist_thresh = cv.phaseCorrelate(
+                corr_shift = cv.phaseCorrelate(
                     np.float32(tgt_img), np.float32(ref_img), None
                 )[0]
-                lower_of_dist_thresh = [np.abs(el) for el in lower_of_dist_thresh]
-                if lower_of_dist_thresh[0] > of_dist_thresh:
-                    big_shifts_detected_x = True
-                if lower_of_dist_thresh[1] > of_dist_thresh:
-                    big_shifts_detected_y = True
 
-            p0 = cv.goodFeaturesToTrack(
-                ref_img, mask=None, **of_params["feature_params"]
-            )
-            p1, st, _ = cv.calcOpticalFlowPyrLK(
-                ref_img,
-                tgt_img,
-                p0,
-                None,
-                **of_params["lk_params"],
-                criteria=criteria,
-            )
-            dists = np.linalg.norm(p1[st == 1] - p0[st == 1], axis=1)
-
-            print(
-                f"For target {i} ({os.path.basename(targets[i])}), found {len(p0[st == 1])} initial features."
-            )
-            print("Filtering features based on distance...")
-
-            ref_good, tgt_good = filter_features(
-                p0[st == 1],
-                p1[st == 1],
-                ref_img,
-                tgt_img,
-                tgt_img.shape,
-                dists,
-                of_dist_thresh,
-                lower_of_dist_thresh,
-                (i, os.path.basename(targets[i])),
-                directional_filtering,
-                (big_shifts_detected_x, big_shifts_detected_y),
-            )
-
-            if tgt_good is None:
-                print(
-                    f"For target {i} ({os.path.basename(targets[i])}), couldn't find valid features for target or reference. Skipping this target.\n"
+            if (shift_method == "big_shifts") and (
+                np.abs(corr_shift[0]) > of_dist_thresh
+                or np.abs(corr_shift[1]) > of_dist_thresh
+            ):
+                warnings.warn(
+                    "Calculating large shifts using phase correlation (EXPERIMENTAL)..."
                 )
-                all_successful = False
-                continue
-            if tgt_good.shape[1] < 4:
-                print(
-                    f"""For target {i} ({os.path.basename(targets[i])}), couldn't find enough good features for target or reference. Num features: {tgt_good.shape[0]}\n"""
+                shift_x = np.float64(corr_shift[0])
+                shift_y = np.float64(corr_shift[1])
+            else:
+                p0 = cv.goodFeaturesToTrack(
+                    ref_img, mask=None, **of_params["feature_params"]
                 )
-                all_successful = False
-                continue
-
-            ref_good_temp = ref_good.copy()[0, :, :]
-            tgt_good_temp = tgt_good.copy()[0, :, :]
-
-            if not no_ransac:
-                _, inliers = cv.estimateAffine2D(tgt_good, ref_good)
-                print("Applying RANSAC filter....")
-                ref_good_temp = ref_good_temp[inliers.ravel().astype(bool)]
-                tgt_good_temp = tgt_good_temp[inliers.ravel().astype(bool)]
-
-            if len(tgt_good_temp) == 0:
-                print(
-                    f"For target {i} ({os.path.basename(targets[i])}), no valid features found after RANSAC filtering.\n"
-                )
-                all_successful = False
-                continue
-
-            if phase_corr_filter:
-                print(f"Applying phase correlation filter...")
-                ref_good_temp, tgt_good_temp = find_corrs_shifts(
+                p1, st, _ = cv.calcOpticalFlowPyrLK(
                     ref_img,
                     tgt_img,
-                    ref_good_temp,
-                    tgt_good_temp,
-                    of_params["lk_params"]["winSize"],
-                    phase_corr_signal_thresh,
-                    valid_num_points=phase_corr_valid_num_points,
+                    p0,
+                    None,
+                    **of_params["lk_params"],
+                    criteria=criteria,
+                )
+                dists = np.linalg.norm(p1[st == 1] - p0[st == 1], axis=1)
+
+                print(
+                    f"For target {i} ({os.path.basename(targets[i])}), found {len(p0[st == 1])} initial features."
+                )
+                print("Filtering features based on distance...")
+
+                ref_good, tgt_good = filter_features(
+                    p0[st == 1],
+                    p1[st == 1],
+                    ref_img,
+                    tgt_img,
+                    tgt_img.shape,
+                    dists,
+                    of_dist_thresh,
+                    lower_of_dist_thresh,
+                    (i, os.path.basename(targets[i])),
+                    directional_filtering,
                 )
 
-            shift_x, shift_y = np.mean(ref_good_temp - tgt_good_temp, axis=0)
+                if tgt_good is None:
+                    print(
+                        f"For target {i} ({os.path.basename(targets[i])}), couldn't find valid features for target or reference. Skipping this target.\n"
+                    )
+                    all_successful = False
+                    continue
+                if tgt_good.shape[1] < 4:
+                    print(
+                        f"""For target {i} ({os.path.basename(targets[i])}), couldn't find enough good features for target or reference. Num features: {tgt_good.shape[0]}\n"""
+                    )
+                    all_successful = False
+                    continue
 
-            num_features = ref_good_temp.shape[0]
+                ref_good_temp = ref_good.copy()[0, :, :]
+                tgt_good_temp = tgt_good.copy()[0, :, :]
 
-            print(
-                f"For target {i} ({os.path.basename(targets[i])}), Num features: {num_features}"
-            )
+                if not no_ransac:
+                    _, inliers = cv.estimateAffine2D(tgt_good, ref_good)
+                    print("Applying RANSAC filter....")
+                    ref_good_temp = ref_good_temp[inliers.ravel().astype(bool)]
+                    tgt_good_temp = tgt_good_temp[inliers.ravel().astype(bool)]
+
+                if len(tgt_good_temp) == 0:
+                    print(
+                        f"For target {i} ({os.path.basename(targets[i])}), no valid features found after RANSAC filtering.\n"
+                    )
+                    all_successful = False
+                    continue
+
+                if phase_corr_filter:
+                    print(f"Applying phase correlation filter...")
+                    ref_good_temp, tgt_good_temp = find_corrs_shifts(
+                        ref_img,
+                        tgt_img,
+                        ref_good_temp,
+                        tgt_good_temp,
+                        of_params["lk_params"]["winSize"],
+                        phase_corr_signal_thresh,
+                        valid_num_points=phase_corr_valid_num_points,
+                    )
+
+                shift_x, shift_y = np.mean(ref_good_temp - tgt_good_temp, axis=0)
+
+                num_features = ref_good_temp.shape[0]
+
+                print(
+                    f"For target {i} ({os.path.basename(targets[i])}), Num features: {num_features}"
+                )
 
             print(
                 f"For target {i} ({os.path.basename(targets[i])}), shifts => x: {shift_x / scale_factors[i][1]}, y: {shift_y / scale_factors[i][0]} pixels.\n"
