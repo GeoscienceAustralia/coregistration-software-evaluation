@@ -2074,7 +2074,7 @@ def co_register(
     affine_transform_targets: bool = False,
     directional_filtering: bool = False,
     no_ransac: bool = False,
-    shift_method: Literal["normal", "big_shifts"] = "normal",
+    shift_method: Literal["mean", "affine", "big_shifts"] = "mean",
 ) -> tuple:
     """
     Co-registers the target images to the reference image using optical flow and phase correlation.
@@ -2128,8 +2128,8 @@ def co_register(
         If True, filters distance per direction (x and y) instead of Euclidean distance, by default False.
     no_ransac: bool, Optional
         If True, skips the RANSAC step for outlier removal, by default False.
-    shift_method: Literal["normal", "big_shifts"], Optional
-        Method for calculating shifts. "normal" for standard shifts, "big_shifts" for large shifts, by default "normal".
+    shift_method: Literal["mean", "affine", "big_shifts"], Optional
+        Method for calculating shifts. "mean" for mean shifts, "affine" for affine transformation, "big_shifts" for large shifts, by default "mean".
 
     Returns
     -------
@@ -2404,7 +2404,12 @@ def co_register(
                         valid_num_points=phase_corr_valid_num_points,
                     )
 
-                shift_x, shift_y = np.mean(ref_good_temp - tgt_good_temp, axis=0)
+                if shift_method == "affine":
+                    affine_matrix, _ = cv.estimateAffine2D(tgt_good_temp, ref_good_temp)
+                    shift_x = np.float64(affine_matrix[0, 2])
+                    shift_y = np.float64(affine_matrix[1, 2])
+                else:
+                    shift_x, shift_y = np.mean(ref_good_temp - tgt_good_temp, axis=0)
 
                 num_features = ref_good_temp.shape[0]
 
