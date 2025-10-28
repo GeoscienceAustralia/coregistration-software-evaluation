@@ -2350,8 +2350,8 @@ def co_register(
                 )[0]
 
                 if any([abs(cs) > of_dist_thresh for cs in corr_shift]):
-                    warnings.warn(
-                        f"For target {i} ({os.path.basename(targets[i])}), calculating large shifts using phase correlation (EXPERIMENTAL)..."
+                    print(
+                        f"For target {i} ({os.path.basename(targets[i])}), calculating large shifts using phase correlation..."
                     )
                     use_corr_shifts = True
 
