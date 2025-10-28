@@ -2092,7 +2092,7 @@ def co_register(
     affine_transform_targets: bool = False,
     directional_filtering: bool = False,
     no_ransac: bool = False,
-    shift_method: Literal["mean", "affine"] = "mean",
+    shift_method: Literal["mean", "median", "affine"] = "mean",
     big_shifts_mode: bool = False,
     big_shifts_corr_win_size: tuple = (256, 256),
 ) -> tuple:
@@ -2148,8 +2148,8 @@ def co_register(
         If True, filters distance per direction (x and y) instead of Euclidean distance, by default False.
     no_ransac: bool, Optional
         If True, skips the RANSAC step for outlier removal, by default False.
-    shift_method: Literal["mean", "affine"], Optional
-        Method for calculating shifts. "mean" for mean shifts, "affine" for affine transformation, by default "mean".
+    shift_method: Literal["mean", "median", "affine"], Optional
+        Method for calculating shifts. "mean" for mean shifts, "median" for median shifts, "affine" for affine transformation, by default "mean".
     big_shifts_mode: bool, Optional
         If True, enables big shifts mode for handling large displacements, by default False.
     big_shifts_corr_win_size: tuple, Optional
@@ -2319,9 +2319,6 @@ def co_register(
     process_ids = []
     all_successful = True
 
-    if big_shifts_mode:
-        phase_corr_filter = True
-
     if export_outputs:
         aligned_output_dir = os.path.join(output_path, "Aligned")
         os.makedirs(aligned_output_dir, exist_ok=True)
@@ -2345,16 +2342,16 @@ def co_register(
         try:
             use_corr_shifts = False
             if big_shifts_mode:
-                corr_shift = cv.phaseCorrelate(
+                corr_shifts = cv.phaseCorrelate(
                     np.float32(tgt_img), np.float32(ref_img), None
                 )[0]
 
-                if any([abs(cs) > of_dist_thresh for cs in corr_shift]):
+                if any([abs(cs) > of_dist_thresh for cs in corr_shifts]):
                     print(
                         f"For target {i} ({os.path.basename(targets[i])}), calculating large shifts using phase correlation..."
                     )
                     print(
-                        f"Initial shifts from phase correlation => x: {corr_shift[0]}, y: {corr_shift[1]} pixels."
+                        f"Initial shifts from phase correlation => x: {corr_shifts[0]}, y: {corr_shifts[1]} pixels."
                     )
                     use_corr_shifts = True
 
@@ -2435,12 +2432,16 @@ def co_register(
                 )
 
             if use_corr_shifts:
+                if not phase_corr_filter:
+                    corr_shifts = np.array([corr_shifts] * len(tgt_good_temp))
                 ref_good_temp = tgt_good_temp.copy() + corr_shifts
 
             if shift_method == "affine":
                 affine_matrix, _ = cv.estimateAffine2D(tgt_good_temp, ref_good_temp)
                 shift_x = np.float64(affine_matrix[0, 2])
                 shift_y = np.float64(affine_matrix[1, 2])
+            elif shift_method == "median":
+                shift_x, shift_y = np.median(ref_good_temp - tgt_good_temp, axis=0)
             else:
                 shift_x, shift_y = np.mean(ref_good_temp - tgt_good_temp, axis=0)
 
