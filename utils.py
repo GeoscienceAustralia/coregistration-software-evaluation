@@ -4013,7 +4013,7 @@ def karios(
                                 shifts.append(
                                     [
                                         (
-                                            float(splits[-1].replace("]", ""))
+                                            (-float(splits[-1].replace("]", "")))
                                             - (
                                                 (
                                                     ref_profile["transform"].c
@@ -4024,7 +4024,7 @@ def karios(
                                         )
                                         / scale_factors[i][1],
                                         (
-                                            float(splits[-2].replace("[", ""))
+                                            (-float(splits[-2].replace("[", "")))
                                             - (
                                                 (
                                                     ref_profile["transform"].f
