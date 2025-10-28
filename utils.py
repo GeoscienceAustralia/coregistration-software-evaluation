@@ -2353,6 +2353,9 @@ def co_register(
                     print(
                         f"For target {i} ({os.path.basename(targets[i])}), calculating large shifts using phase correlation..."
                     )
+                    print(
+                        f"Initial shifts from phase correlation => x: {corr_shift[0]}, y: {corr_shift[1]} pixels."
+                    )
                     use_corr_shifts = True
 
             p0 = cv.goodFeaturesToTrack(
