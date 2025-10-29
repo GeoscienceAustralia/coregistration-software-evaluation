@@ -2173,6 +2173,7 @@ def co_register(
         Distance threshold for the optical flow points, by default 2 (pixels).
     phase_corr_filter: bool, Optional
         Whether to apply phase correlation filtering, by default True.
+        In big shifts mode, it acts as a local phase correlation operator to evaluate local shifts in tie points. Turning this off in big shifts mode switched the local phase correlation to a global one.
     phase_corr_signal_thresh: float, Optional
         Signal threshold for the phase correlation filtering, by default 0.9.
     phase_corr_valid_num_points: int, Optional
@@ -4020,7 +4021,8 @@ def karios(
                 output_dir=f"{output_dir}/downsampled/tgt_{i}",
             )
             tgt_images_copy[i] = os.path.join(
-                f"{output_dir}/downsampled/tgt_{i}", os.path.basename(tgt_images_copy[i])
+                f"{output_dir}/downsampled/tgt_{i}",
+                os.path.basename(tgt_images_copy[i]),
             )
             ds_profiles[i] = rasterio.open(tgt_images_copy[i]).profile
             ref_images[i] = os.path.join(
