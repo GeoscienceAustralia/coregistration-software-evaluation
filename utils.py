@@ -53,6 +53,7 @@ from geojson import loads as gloads
 from dask import optimize
 import copy
 from scipy import stats
+import simplekml
 
 
 dbscan = DBSCAN(min_samples=2, eps=0.01)
@@ -5590,3 +5591,32 @@ def coreg(
             f"Method {method} not recognized. Use 'co_register', 'karios', or 'arosics'."
         )
     return shifts, target_ids
+
+
+def write_polygon_to_kml(polygon, kml_filename, poly_name="AOI") -> None:
+    """Writes Shapely Polygon/Multipolygon to KML file.
+
+    Parameters
+    ----------
+    polygon : shapely.geometry.Polygon | shapely.geometry.MultiPolygon
+        Shapely Polygon or MultiPolygon to write to KML.
+    kml_filename : str
+        Output KML filename.
+    poly_name : str, optional
+        Name of the polygon in the KML file, by default "AOI".
+
+    Returns
+    -------
+    None
+    """
+    kml = simplekml.Kml()
+    if polygon.geom_type == "Polygon":
+        pol = kml.newpolygon(name=poly_name)
+        pol.outerboundaryis = [(x, y) for x, y in polygon.exterior.coords]
+    elif polygon.geom_type == "MultiPolygon":
+        for i, p in enumerate(polygon.geoms):
+            pol = kml.newpolygon(name=f"{poly_name}_{i}")
+            pol.outerboundaryis = [(x, y) for x, y in p.exterior.coords]
+    kml.save(kml_filename)
+
+    return None
