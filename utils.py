@@ -738,6 +738,7 @@ def find_overlap(
     return_images: bool = False,
     return_pixels: bool = False,
     resampling_resolution: str = "lower",
+    output_dir: str = "",
 ) -> tuple:
     """
     Crude overlap finder for two overlapping scenes. (finds the bounding box around the overlapping area.
@@ -756,6 +757,9 @@ def find_overlap(
     resampling_resolution : str, optional
         The resolution to which the datasets should be resampled if their resolutions are different.
         Can be either "lower" or "higher", by default "lower".
+    output_dir : str, optional
+        Directory to save overlapping area files if needed, by default "".
+        If provided, `return_pixels` and `return_images` will be set to True.
 
     Returns
     -------
@@ -777,6 +781,15 @@ def find_overlap(
 
     if return_images:
         return_pixels = True
+
+    if output_dir != "":
+        return_images = True
+        return_pixels = True
+        os.makedirs(output_dir, exist_ok=True)
+        overlapping_bounds_real = box(*bounds_1).intersection(box(*bounds_2)).bounds
+        real_left = overlapping_bounds_real[0]
+        real_top = overlapping_bounds_real[3]
+        overlap_profile = raster_1.profile
 
     scale_factors = [[1.0, 1.0]] * 2
     if return_pixels:
@@ -877,6 +890,41 @@ def find_overlap(
         ]
 
     shutil.rmtree("temp", ignore_errors=True)
+
+    if output_dir != "":
+        overlap_profile.update(
+            {
+                "height": raster_overlap_1.shape[0],
+                "width": raster_overlap_1.shape[1],
+                "transform": rasterio.Affine(
+                    raster_1.profile["transform"].a,
+                    raster_1.profile["transform"].b,
+                    real_left,
+                    raster_1.profile["transform"].d,
+                    raster_1.profile["transform"].e,
+                    real_top,
+                ),
+            }
+        )
+        if overlap_profile["count"] == 1:
+            raster_overlap_1 = np.expand_dims(raster_overlap_1, axis=2)
+            raster_overlap_2 = np.expand_dims(raster_overlap_2, axis=2)
+        with rasterio.open(
+            os.path.join(output_dir, os.path.basename(dataset_1)),
+            "w",
+            **overlap_profile,
+        ) as dst:
+            for i in range(overlap_profile["count"]):
+                dst.write(raster_overlap_1[:, :, i], i + 1)
+        with rasterio.open(
+            os.path.join(output_dir, os.path.basename(dataset_2)),
+            "w",
+            **overlap_profile,
+        ) as dst:
+            for i in range(overlap_profile["count"]):
+                dst.write(raster_overlap_2[:, :, i], i + 1)
+        raster_overlap_1 = np.squeeze(raster_overlap_1)
+        raster_overlap_2 = np.squeeze(raster_overlap_2)
 
     return (
         overlap_in_mosaic,
@@ -3950,7 +3998,8 @@ def karios(
     ref_profile = rasterio.open(ref_image).profile
     tgt_profiles = [rasterio.open(t).profile for t in tgt_images_copy]
     ds_profiles = tgt_profiles.copy()
-    scale_factors = [[1.0, 1.0]] * len(tgt_images)
+    ref_images = [ref_image] * len(tgt_images_copy)
+
     for i, tgt_profile in enumerate(tgt_profiles):
         downsample = False
         if tgt_profile["height"] != ref_profile["height"]:
@@ -3965,23 +4014,25 @@ def karios(
             downsample = True
         if downsample:
             os.makedirs(f"{output_dir}/downsampled", exist_ok=True)
-            _, (_, scale_factor) = downsample_dataset(
+            find_overlap(
+                ref_image,
                 tgt_images_copy[i],
-                force_shape=(ref_profile["height"], ref_profile["width"]),
-                output_file=f"{output_dir}/downsampled/{os.path.basename(tgt_images_copy[i])}",
+                output_dir=f"{output_dir}/downsampled/tgt_{i}",
             )
-            tgt_images_copy[i] = (
-                f"{output_dir}/downsampled/{os.path.basename(tgt_images_copy[i])}"
+            tgt_images_copy[i] = os.path.join(
+                f"{output_dir}/downsampled/tgt_{i}", os.path.basename(tgt_images_copy[i])
             )
             ds_profiles[i] = rasterio.open(tgt_images_copy[i]).profile
-            scale_factors[i] = scale_factor
+            ref_images[i] = os.path.join(
+                f"{output_dir}/downsampled/tgt_{i}", os.path.basename(ref_images[i])
+            )
 
     log_file = f"{output_dir}/karios.log"
     if os.path.isfile(log_file):
         os.remove(log_file)
     for i, tgt_image in enumerate(tgt_images_copy):
         try:
-            cmd = f"{karios_executable} process {tgt_image} {ref_image} --out {output_dir} --log-file-path {log_file} "
+            cmd = f"{karios_executable} process {tgt_image} {ref_images[i]} --out {output_dir} --log-file-path {log_file} "
             if scan_big_shifts:
                 cmd += "--enable-large-shift-detection "
             print(f"Running {cmd}")
@@ -4011,31 +4062,11 @@ def karios(
                         if "Large offset found:" in line:
                             splits = line.strip().split()
                             if splits[-4] != "nan" or splits[-1] != "nan":
-                                scene_names.append(tgt_image)
+                                scene_names.append(tgt_images[i])
                                 shifts.append(
                                     [
-                                        (
-                                            (-float(splits[-1].replace("]", "")))
-                                            - (
-                                                (
-                                                    ref_profile["transform"].c
-                                                    - ds_profiles[i]["transform"].c
-                                                )
-                                                / ref_profile["transform"].a
-                                            )
-                                        )
-                                        / scale_factors[i][1],
-                                        (
-                                            (-float(splits[-2].replace("[", "")))
-                                            - (
-                                                (
-                                                    ref_profile["transform"].f
-                                                    - ds_profiles[i]["transform"].f
-                                                )
-                                                / ref_profile["transform"].e
-                                            )
-                                        )
-                                        / scale_factors[i][0],
+                                        -float(splits[-1].replace("]", "")),
+                                        -float(splits[-2].replace("[", "")),
                                     ]
                                 )
                                 target_ids.append(i)
@@ -4055,19 +4086,11 @@ def karios(
                             if splits[2] != "nan":
                                 shift_y = float(splits[2])
                             mean_n_found = False
-                            scene_names.append(tgt_image)
+                            scene_names.append(tgt_images[i])
                             shifts.append(
                                 [
-                                    shift_x
-                                    / (
-                                        scale_factors[i][1]
-                                        * abs(ds_profiles[i]["transform"].a)
-                                    ),
-                                    shift_y
-                                    / (
-                                        scale_factors[i][0]
-                                        * abs(ds_profiles[i]["transform"].e)
-                                    ),
+                                    shift_x / abs(ds_profiles[i]["transform"].a),
+                                    shift_y / abs(ds_profiles[i]["transform"].e),
                                 ]
                             )
                             target_ids.append(i)
