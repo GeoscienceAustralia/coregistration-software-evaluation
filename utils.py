@@ -3757,9 +3757,6 @@ def generate_results_from_raw_inputs(
         target_ids = list(range(len(processed_output_images)))
 
     os.makedirs(output_dir, exist_ok=True)
-    output_path = os.path.join(output_dir, f"{output_name}.gif")
-    if os.path.isfile(output_path):
-        os.remove(output_path)
 
     tgt_aligned_list = []
     ref_imgs = []
@@ -3794,6 +3791,11 @@ def generate_results_from_raw_inputs(
                 gif_target_titles, ssims_aligned, mse_aligned, zncc_aligned
             )
         ]
+
+        output_path = os.path.join(output_dir, f"{output_name}.gif")
+        if os.path.isfile(output_path):
+            os.remove(output_path)
+
         make_difference_gif(
             datasets_paths,
             output_path,
@@ -3801,10 +3803,6 @@ def generate_results_from_raw_inputs(
             mosaic_scenes=True,
             fps=gif_fps,
         )
-
-        output_path = os.path.join(output_dir, f"{output_name}_raw.gif")
-        if os.path.isfile(output_path):
-            os.remove(output_path)
 
     tgt_raw_list = []
     ref_imgs = []
@@ -3834,6 +3832,11 @@ def generate_results_from_raw_inputs(
                 gif_target_titles, ssims_aligned_raw, mse_aligned_raw, zncc_aligned_raw
             )
         ]
+
+        output_path = os.path.join(output_dir, f"{output_name}_raw.gif")
+        if os.path.isfile(output_path):
+            os.remove(output_path)
+
         make_difference_gif(
             datasets_paths,
             output_path,
@@ -3842,9 +3845,9 @@ def generate_results_from_raw_inputs(
             fps=gif_fps,
         )
 
-        output_path = os.path.join(output_dir, f"{output_name}.csv")
-        if os.path.isfile(output_path):
-            os.remove(output_path)
+    output_path = os.path.join(output_dir, f"{output_name}.csv")
+    if os.path.isfile(output_path):
+        os.remove(output_path)
 
     out_ssim_df = pd.DataFrame(
         zip(
