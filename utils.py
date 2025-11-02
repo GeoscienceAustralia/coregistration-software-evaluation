@@ -3742,7 +3742,7 @@ def generate_results_from_raw_inputs(
     target_ids : list | None, optional
         Ids of the processed target images, by default None.
     gif_fps : int, optional
-        Frames per second for the output GIFs, by default 3.
+        Frames per second for the output GIFs, by default 3. If set to 0, no GIFs will be created.
 
     Returns
     -------
@@ -3781,24 +3781,26 @@ def generate_results_from_raw_inputs(
         np.round(zncc(ref_imgs[id], tgt_aligned_list[id]), 3)
         for id in range(len(tgt_aligned_list))
     ]
-    target_titles = [f"target_{str(i)}" for i in target_ids]
-    datasets_titles = ["Reference"] + [
-        f"{target_title}, ssim:{ssim_score}, mse:{mse_score}, zncc:{zncc_score}"
-        for target_title, ssim_score, mse_score, zncc_score in zip(
-            target_titles, ssims_aligned, mse_aligned, zncc_aligned
-        )
-    ]
-    make_difference_gif(
-        datasets_paths,
-        output_path,
-        datasets_titles,
-        mosaic_scenes=True,
-        fps=gif_fps,
-    )
 
-    output_path = os.path.join(output_dir, f"{output_name}_raw.gif")
-    if os.path.isfile(output_path):
-        os.remove(output_path)
+    if gif_fps != 0:
+        target_titles = [f"target_{str(i)}" for i in target_ids]
+        datasets_titles = ["Reference"] + [
+            f"{target_title}, ssim:{ssim_score}, mse:{mse_score}, zncc:{zncc_score}"
+            for target_title, ssim_score, mse_score, zncc_score in zip(
+                target_titles, ssims_aligned, mse_aligned, zncc_aligned
+            )
+        ]
+        make_difference_gif(
+            datasets_paths,
+            output_path,
+            datasets_titles,
+            mosaic_scenes=True,
+            fps=gif_fps,
+        )
+
+        output_path = os.path.join(output_dir, f"{output_name}_raw.gif")
+        if os.path.isfile(output_path):
+            os.remove(output_path)
 
     tgt_raw_list = []
     ref_imgs = []
@@ -3820,23 +3822,26 @@ def generate_results_from_raw_inputs(
         np.round(zncc(ref_imgs[id], tgt_raw_list[id]), 3)
         for id in range(len(tgt_raw_list))
     ]
-    datasets_titles = ["Reference"] + [
-        f"{target_title}, ssim:{ssim_score}, mse:{mse_score}, zncc:{zncc_score}"
-        for target_title, ssim_score, mse_score, zncc_score in zip(
-            target_titles, ssims_aligned_raw, mse_aligned_raw, zncc_aligned_raw
-        )
-    ]
-    make_difference_gif(
-        datasets_paths,
-        output_path,
-        datasets_titles,
-        mosaic_scenes=True,
-        fps=gif_fps,
-    )
 
-    output_path = os.path.join(output_dir, f"{output_name}.csv")
-    if os.path.isfile(output_path):
-        os.remove(output_path)
+    if gif_fps != 0:
+        datasets_titles = ["Reference"] + [
+            f"{target_title}, ssim:{ssim_score}, mse:{mse_score}, zncc:{zncc_score}"
+            for target_title, ssim_score, mse_score, zncc_score in zip(
+                target_titles, ssims_aligned_raw, mse_aligned_raw, zncc_aligned_raw
+            )
+        ]
+        make_difference_gif(
+            datasets_paths,
+            output_path,
+            datasets_titles,
+            mosaic_scenes=True,
+            fps=gif_fps,
+        )
+
+        output_path = os.path.join(output_dir, f"{output_name}.csv")
+        if os.path.isfile(output_path):
+            os.remove(output_path)
+
     out_ssim_df = pd.DataFrame(
         zip(
             target_titles,
