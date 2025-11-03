@@ -3779,16 +3779,13 @@ def generate_results_from_raw_inputs(
         for id in range(len(tgt_aligned_list))
     ]
 
-    target_titles = [
-        os.path.basename(tgt).split(".")[0] for tgt in processed_output_images
-    ]
-    gif_target_titles = [f"target_{str(i)}" for i in target_ids]
+    target_titles = [f"target_{str(i)}" for i in target_ids]
 
     if gif_fps != 0:
         datasets_titles = ["Reference"] + [
             f"{target_title}, ssim:{ssim_score}, mse:{mse_score}, zncc:{zncc_score}"
             for target_title, ssim_score, mse_score, zncc_score in zip(
-                gif_target_titles, ssims_aligned, mse_aligned, zncc_aligned
+                target_titles, ssims_aligned, mse_aligned, zncc_aligned
             )
         ]
 
@@ -3829,7 +3826,7 @@ def generate_results_from_raw_inputs(
         datasets_titles = ["Reference"] + [
             f"{target_title}, ssim:{ssim_score}, mse:{mse_score}, zncc:{zncc_score}"
             for target_title, ssim_score, mse_score, zncc_score in zip(
-                gif_target_titles, ssims_aligned_raw, mse_aligned_raw, zncc_aligned_raw
+                target_titles, ssims_aligned_raw, mse_aligned_raw, zncc_aligned_raw
             )
         ]
 
