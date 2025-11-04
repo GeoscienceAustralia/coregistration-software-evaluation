@@ -3114,6 +3114,9 @@ def make_composite_scene(
 
         img = cv.merge(band_imgs)
 
+    if not preserve_depth and img.dtype == "uint16":
+        img = np.clip(img / 256, 0, 255).astype("uint8")
+
     if gray_scale:
         if averaging:
             img = np.mean(img, axis=2)
@@ -3130,6 +3133,8 @@ def make_composite_scene(
         output_type = img.dtype
     else:
         output_type = "uint8"
+        profile["dtype"] = "uint8"
+
     img = apply_gamma(
         img, gamma, stretch_contrast, equalise_histogram, min_max_scaling, output_type
     )
