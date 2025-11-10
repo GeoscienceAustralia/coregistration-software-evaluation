@@ -954,7 +954,8 @@ def make_mosaic(
     cluster_masks: bool = False,
     force_crs: Literal["auto"] | str | None = "auto",
     no_affine: bool = False,
-    masking_edge_pixel_count: bool = False,
+    masking_edge_scene_count: bool = False,
+    min_num_masks_per_row: int | None = None,
 ) -> tuple:
     """
     Creates a mosaic of overlapping scenes. Offsets will be added to the size of the final mosaic if specified.
@@ -1001,7 +1002,12 @@ def make_mosaic(
     no_affine: bool, optional
         Does not perform affine transformation and assumes the images are already geo-referenced.
         Defaults to False.
-    masking_edge_pixel_count: bool, optional
+    masking_edge_scene_count: bool, optional
+        If True, counts and returns the number of scenes on the edges from no to full overlapping tiles, when all tiles have intersecting data.
+        Defaults to False.
+    min_num_masks_per_row: int | None, optional
+        Minimum number of masks required per row when `masking_edge_scene_count` is True to filter based on the min number of available scenes around the edges.
+        If None, No filtering will take place. Defaults to None.
 
     Returns
     -------
@@ -1245,45 +1251,109 @@ def make_mosaic(
             )  # Create a dictionary of masks with their labels and indices
             masks_per_cluster = []
             mask_per_cluster = []
+            idx_list = []
             for label in unique_labels:  # Iterate over unique labels
                 cluster_masks_idx = [
                     i for i in (range(len(labels))) if labels[i] == label
                 ]
                 cluster_masks = [masks[i] for i in cluster_masks_idx]
                 mask_per_cluster.append(np.logical_or.reduce(cluster_masks))
-                if masking_edge_pixel_count:
+                idx_list.append(cluster_masks_idx)
+                if masking_edge_scene_count:
                     masks_per_cluster.append(cluster_masks)
 
-            edge_pixel_counts = [0] * len(mask_per_cluster)
+            edge_scene_count = [0] * len(mask_per_cluster)
+            if masking_edge_scene_count:
+                # masks should not be identical. If they are they belong to the same cluster
+                # also masks should not have data inside universal mask
+                for i, checked_masks in enumerate(masks_per_cluster):
+                    warps_idx = list(range(len(checked_masks)))
+                    data_cols = np.where(
+                        (np.all(mask_per_cluster[i], axis=2) == 0)
+                        if len(mask_per_cluster[i].shape) == 3
+                        else mask_per_cluster[i] == 0
+                    )[1]
+                    start_col = int((data_cols.min() + data_cols.max()) / 2)
+                    start_row = 0
+                    sum_data = 0
+                    num_masks_per_row = []
+                    while (
+                        sum_data != len(checked_masks)
+                        and start_row < mask_per_cluster[i].shape[0]
+                    ):
+                        have_data = []
+                        for mask in checked_masks:
+                            have_data.append(
+                                np.logical_or.reduce(mask[start_row, start_col])
+                            )
+                        sum_data = np.sum(~np.array(have_data))
+
+                        if (min_num_masks_per_row is not None) and (
+                            sum_data < min_num_masks_per_row
+                        ):
+                            warps_idx_in_cluster = np.where(~np.array(have_data))[0].tolist()
+                            warps_idx = [idx_list[i][j] for j in warps_idx_in_cluster]
+                        num_masks_per_row.append(sum_data)
+                        start_row += 1
+                    print(
+                        f"Cluster {i}: using {len(warps_idx)} out of {len(checked_masks)} masks for universal masking."
+                    )
+                    idx_list[i] = warps_idx
+                    edge_scene_count[i] = list(
+                        filter(lambda x: x > 0, num_masks_per_row)
+                    )
+
             for i, warp in enumerate(warps):
                 if masks_dict[i] != -1:
                     universal_mask = mask_per_cluster[masks_dict[i]]
+                    warps_idx = idx_list[masks_dict[i]]
                     if np.all(universal_mask):
                         warnings.warn(
                             "WARNING: All pixels in the warps are masked. Warped outputs will be empty."
                         )
-                    warp[universal_mask] = 0
-                    if masking_edge_pixel_count:
-                        # masks should not be identical. If they are they belong to the same cluster
-                        # also masks should not have data inside universal mask
-                        for checked_mask in masks_per_cluster[masks_dict[i]]:
-                            checked_pixels = checked_mask[universal_mask]
-                            if not np.all(checked_pixels):
-                                edge_pixel_counts[masks_dict[i]] += 1
+                    if i in warps_idx:
+                        warp[universal_mask] = 0
+                        warps[i] = warp
         else:
             universal_mask = np.logical_or.reduce(masks)
+            warps_idx = list(range(len(masks)))
+
+            if masking_edge_scene_count:
+                data_cols = np.where(
+                    (np.all(universal_mask, axis=2) == 0)
+                    if len(universal_mask.shape) == 3
+                    else universal_mask == 0
+                )[1]
+                start_col = int((data_cols.min() + data_cols.max()) / 2)
+                start_row = 0
+                sum_data = 0
+                num_masks_per_row = []
+                while sum_data != len(masks) and start_row < universal_mask.shape[0]:
+                    have_data = []
+                    for mask in masks:
+                        have_data.append(
+                            np.logical_or.reduce(mask[start_row, start_col])
+                        )
+                    sum_data = np.sum(~np.array(have_data))
+                    if (min_num_masks_per_row is not None) and (
+                        sum_data < min_num_masks_per_row
+                    ):
+                        warps_idx = np.where(~np.array(have_data))[0].tolist()
+                    num_masks_per_row.append(sum_data)
+                    start_row += 1
+                edge_scene_count = list(filter(lambda x: x > 0, num_masks_per_row))
+
             if np.all(universal_mask):
                 warnings.warn(
                     "WARNING: All pixels in the warps are masked. Warped outputs will be empty."
                 )
-            # if len(universal_mask.shape) == 3:
-            #     universal_mask = np.all(universal_mask, axis=2)
-            edge_pixel_counts = 0
+            print(
+                f"using {len(warps_idx)} out of {len(masks)} masks for universal masking."
+            )
             for i, warp in enumerate(warps):
-                warp[universal_mask] = 0
-                if masking_edge_pixel_count:
-                    if not np.all(masks[i][universal_mask]):
-                        edge_pixel_counts += 1
+                if i in warps_idx:
+                    warp[universal_mask] = 0
+                    warps[i] = warp
 
     if os.path.exists("temp/reproject"):
         shutil.rmtree("temp/reproject", ignore_errors=True)
@@ -1320,8 +1390,11 @@ def make_mosaic(
     to_return = warps
     if universal_masking:
         to_return = (warps, masks)
-        if masking_edge_pixel_count:
-            to_return = (warps, masks, edge_pixel_counts)
+        if masking_edge_scene_count:
+            if cluster_masks:
+                to_return = (warps, masks, mask_per_cluster, edge_scene_count)
+            else:
+                to_return = (warps, masks, universal_mask, edge_scene_count)
 
     return (
         mosaic,
