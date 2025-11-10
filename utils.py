@@ -1223,7 +1223,13 @@ def make_mosaic(
         if cluster_masks:
             cls_list = np.array(
                 [
-                    np.mean(np.argwhere(np.all(ar, axis=2) == 0), axis=0) / ar.shape[:2]
+                    np.mean(
+                        np.argwhere(
+                            (np.all(ar, axis=2) == 0) if len(ar.shape) == 3 else ar == 0
+                        ),
+                        axis=0,
+                    )
+                    / ar.shape[:2]
                     for ar in masks
                 ]
             )
