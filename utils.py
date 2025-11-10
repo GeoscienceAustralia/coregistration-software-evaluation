@@ -954,6 +954,7 @@ def make_mosaic(
     cluster_masks: bool = False,
     force_crs: Literal["auto"] | str | None = "auto",
     no_affine: bool = False,
+    masking_edge_pixel_count: bool = False,
 ) -> tuple:
     """
     Creates a mosaic of overlapping scenes. Offsets will be added to the size of the final mosaic if specified.
@@ -999,6 +1000,8 @@ def make_mosaic(
         If a str, the function will use the provided CRS information. The provided CRS should be in the form of an EPSG code (e.g., "EPSG:4326").
     no_affine: bool, optional
         Does not perform affine transformation and assumes the images are already geo-referenced.
+        Defaults to False.
+    masking_edge_pixel_count: bool, optional
 
     Returns
     -------
@@ -1235,21 +1238,32 @@ def make_mosaic(
                 [(j, i) for i, j in zip(labels, range(len(masks)))]
             )  # Create a dictionary of masks with their labels and indices
             masks_per_cluster = []
+            mask_per_cluster = []
             for label in unique_labels:  # Iterate over unique labels
                 cluster_masks_idx = [
                     i for i in (range(len(labels))) if labels[i] == label
                 ]
                 cluster_masks = [masks[i] for i in cluster_masks_idx]
-                masks_per_cluster.append(np.logical_or.reduce(cluster_masks))
+                mask_per_cluster.append(np.logical_or.reduce(cluster_masks))
+                if masking_edge_pixel_count:
+                    masks_per_cluster.append(cluster_masks)
 
+            edge_pixel_counts = [0] * len(mask_per_cluster)
             for i, warp in enumerate(warps):
                 if masks_dict[i] != -1:
-                    universal_mask = masks_per_cluster[masks_dict[i]]
+                    universal_mask = mask_per_cluster[masks_dict[i]]
                     if np.all(universal_mask):
                         warnings.warn(
                             "WARNING: All pixels in the warps are masked. Warped outputs will be empty."
                         )
                     warp[universal_mask] = 0
+                    if masking_edge_pixel_count:
+                        # masks should not be identical. If they are they belong to the same cluster
+                        # also masks should not have data inside universal mask
+                        for checked_mask in masks_per_cluster[masks_dict[i]]:
+                            checked_pixels = checked_mask[universal_mask]
+                            if not np.all(checked_pixels):
+                                edge_pixel_counts[masks_dict[i]] += 1
         else:
             universal_mask = np.logical_or.reduce(masks)
             if np.all(universal_mask):
@@ -1258,8 +1272,12 @@ def make_mosaic(
                 )
             # if len(universal_mask.shape) == 3:
             #     universal_mask = np.all(universal_mask, axis=2)
-            for warp in warps:
+            edge_pixel_counts = 0
+            for i, warp in enumerate(warps):
                 warp[universal_mask] = 0
+                if masking_edge_pixel_count:
+                    if not np.all(masks[i][universal_mask]):
+                        edge_pixel_counts += 1
 
     if os.path.exists("temp/reproject"):
         shutil.rmtree("temp/reproject", ignore_errors=True)
@@ -1293,9 +1311,15 @@ def make_mosaic(
         mosaic_profile["nodata"] = nodata
         original_mosaic_profile["nodata"] = nodata
 
+    to_return = warps
+    if universal_masking:
+        to_return = (warps, masks)
+        if masking_edge_pixel_count:
+            to_return = (warps, masks, edge_pixel_counts)
+
     return (
         mosaic,
-        ((warps, masks) if universal_masking else warps),
+        to_return,
         (
             (mosaic_profile, original_mosaic_profile)
             if return_profile_only
@@ -5272,7 +5296,6 @@ def reproject_bounds(
 ) -> list[list]:
     """
     Reprojects list of bounding boxes to the given `crs`.
-
     Parameters
     ----------
     bounds : list[list | rasterio.coords.BoundingBox]
