@@ -1244,6 +1244,7 @@ def make_mosaic(
                     for ar in masks
                 ]
             )
+            areas_list = [mask_to_poly(ar).area for ar in masks]
             nan_inds = np.where(np.isnan(cls_list[:, 0]))[0]
             nan_arr = np.arange(1, len(nan_inds) + 1) * -1
             cls_list[nan_inds] = np.stack([nan_arr, nan_arr], axis=1)
@@ -1258,6 +1259,7 @@ def make_mosaic(
             mask_per_cluster = []
             idx_list = []
             cluster_centres_list = []
+            cluster_areas_list = []
             for label in unique_labels:  # Iterate over unique labels
                 cluster_masks_idx = [
                     i for i in (range(len(labels))) if labels[i] == label
@@ -1266,6 +1268,7 @@ def make_mosaic(
                 mask_per_cluster.append(np.logical_or.reduce(cluster_masks))
                 idx_list.append(cluster_masks_idx)
                 cluster_centres_list.append(cls_list[cluster_masks_idx])
+                cluster_areas_list.append([areas_list[i] for i in cluster_masks_idx])
                 if masking_edge_scene_count:
                     masks_per_cluster.append(cluster_masks)
 
@@ -1311,10 +1314,18 @@ def make_mosaic(
                             / mask_per_cluster[i].shape[:2],
                             axis=0,
                         )
-                        neigh.fit(cluster_centres_list[i])
+                        universal_area = mask_to_poly(mask_per_cluster[i]).area
+                        cluster_areas = [
+                            area / universal_area for area in cluster_areas_list[i]
+                        ]
+                        universal_data = np.hstack([*universal_centre, 1.0])
+                        cluster_data = np.column_stack(
+                            (cluster_centres_list[i], cluster_areas)
+                        )
+                        neigh.fit(cluster_data)
                         warps_idx_in_cluster = (
                             neigh.kneighbors(
-                                universal_centre.reshape(1, -1),
+                                universal_data.reshape(1, -1),
                                 min(
                                     filtering_min_num_masks,
                                     len(cluster_centres_list[i]),
@@ -1324,9 +1335,9 @@ def make_mosaic(
                             .flatten()
                             .tolist()
                         )
-                        mask_per_cluster[i] = np.logical_and.reduce(
-                            [cluster_masks[j] for j in warps_idx_in_cluster]
-                        )
+                        # mask_per_cluster[i] = np.logical_and.reduce(
+                        #     [cluster_masks[j] for j in warps_idx_in_cluster]
+                        # )
                         warps_idx_in_cluster = list(
                             set(range(len(cluster_masks))) - set(warps_idx_in_cluster)
                         )
@@ -5787,3 +5798,30 @@ def write_polygon_to_kml(polygon, kml_filename, poly_name="AOI") -> None:
     kml.save(kml_filename)
 
     return None
+
+
+def mask_to_poly(mask):
+    """Creates a polygon from a mask where the pixels with data are False.
+
+    Parameters
+    ----------
+    mask : np.ndarray
+        A binary mask where False indicates the area to be included in the polygon.
+
+    Returns
+    -------
+    shapely.geometry.Polygon
+        A polygon representing the masked area.
+    """
+    idx = np.where(~mask)
+    x = idx[1]
+    y = idx[0]
+    min_x = np.min(x)
+    max_x = np.max(x)
+    min_y = np.min(y)
+    max_y = np.max(y)
+    p0 = [min_x, y[np.where(x == min_x)[0][0]]]
+    p1 = [x[np.where(y == min_y)[0][0]], min_y]
+    p2 = [max_x, y[np.where(x == max_x)[0][0]]]
+    p3 = [x[np.where(y == max_y)[0][0]], max_y]
+    return Polygon([p0, p1, p2, p3])
