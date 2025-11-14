@@ -18,7 +18,6 @@ rioxarray
 pystac-client
 dem-handler @ git+https://github.com/GeoscienceAustralia/dem-handler.git@main
 rioxarray
-pystac_client
 imageio
 pystac
 multiprocess
@@ -26,6 +25,13 @@ geom_median
 dask[distributed]
 ipykernel
 rich-click
+geopandas
 karios @ git+https://github.com/telespazio-tim/karios.git@main
 geomad @ git+https://github.com/GeoscienceAustralia/geomad.git@main
 simplekml
+odc-algo
+odc-stac
+odc-geo
+pykrige
+arosics
+geojson
