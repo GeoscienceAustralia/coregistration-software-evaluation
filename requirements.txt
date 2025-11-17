@@ -27,7 +27,6 @@ ipykernel
 rich-click
 geopandas
 karios @ git+https://github.com/telespazio-tim/karios.git@main
-geomad @ git+https://github.com/GeoscienceAustralia/geomad.git@main
 simplekml
 odc-algo
 odc-stac
