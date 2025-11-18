@@ -478,6 +478,7 @@ def downsample_dataset(
     readjust_origin: bool = False,
     round_resolution: bool = False,
     masked_data: bool = False,
+    resampling: Resampling = Resampling.bilinear,
 ) -> tuple:
     """
     Downsamples the output data and returns the new downsampled data and its new affine transformation according to `scale_factor`
@@ -507,6 +508,8 @@ def downsample_dataset(
         Defaults to False.
     masked_data : bool, optional
         If True, reads the data as a masked array to handle nodata values. Defaults to False.
+    resampling : Resampling, optional
+        The resampling method to use. Defaults to Resampling.bilinear.
 
     Returns
     -------
@@ -531,7 +534,7 @@ def downsample_dataset(
                 dataset.count,
                 *output_shape,
             ),
-            resampling=Resampling.bilinear,
+            resampling=resampling,
             masked=masked_data,
         )
 
@@ -4917,21 +4920,23 @@ def download_and_process_series(
                                 [band_output],
                                 verbose=False,
                             )
-                            if type(stream_out_scale_factor) == float:
-                                stream_out_scale_factor = [stream_out_scale_factor] * 2
-                            with rasterio.open(band_output) as src:
-                                profile = src.profile
-                                stream_out_shape = (
-                                    int(profile["height"] * stream_out_scale_factor[0]),
-                                    int(profile["width"] * stream_out_scale_factor[1]),
-                                )
-                                band_img = src.read(
-                                    out_shape=(src.count, *stream_out_shape),
-                                    resampling=stream_reshape_method,
-                                )
-                                bounds = src.bounds
-                                crs = src.crs
-                            band_meta = {"profile": profile, "bounds": bounds, "crs": crs}
+                            downsample_dataset(
+                                band_output,
+                                stream_out_scale_factor,
+                                band_output,
+                                round_resolution=stream_round_transform,
+                                resampling=stream_reshape_method,
+                            )
+                            with rasterio.open(band_output) as ds:
+                                band_img = ds.read()
+                                profile = ds.profile
+                                bounds = ds.bounds
+                                crs = ds.crs
+                            band_meta = {
+                                "profile": profile,
+                                "bounds": bounds,
+                                "crs": crs,
+                            }
                         else:
                             band_img, band_meta = stream_scene(
                                 band_url,
@@ -4946,7 +4951,9 @@ def download_and_process_series(
                                 for i in range(band_meta["profile"]["count"]):
                                     ds.write(band_img[i, :, :], i + 1)
                     except Exception as e:
-                        print(f"Error downloading band {band} from {band_url}. Not processing.")
+                        print(
+                            f"Error downloading band {band} from {band_url}. Not processing."
+                        )
                         break
 
         if download_only:
