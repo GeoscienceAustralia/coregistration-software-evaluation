@@ -4908,42 +4908,46 @@ def download_and_process_series(
                 if os.path.isfile(band_output):
                     print(f"Original file for {band} band already exists, skipping.")
                 else:
-                    if alternate_download:
-                        bucket = band_url.split("//")[1].split("/")[0]
-                        download_files(
-                            bucket,
-                            [band_url],
-                            [band_output],
-                            verbose=False,
-                        )
-                        if type(stream_out_scale_factor) == float:
-                            stream_out_scale_factor = [stream_out_scale_factor] * 2
-                        with rasterio.open(band_output) as src:
-                            profile = src.profile
-                            stream_out_shape = (
-                                int(profile["height"] * stream_out_scale_factor[0]),
-                                int(profile["width"] * stream_out_scale_factor[1]),
+                    try:
+                        if alternate_download:
+                            bucket = band_url.split("//")[1].split("/")[0]
+                            download_files(
+                                bucket,
+                                [band_url],
+                                [band_output],
+                                verbose=False,
                             )
-                            band_img = src.read(
-                                out_shape=(src.count, *stream_out_shape),
-                                resampling=stream_reshape_method,
+                            if type(stream_out_scale_factor) == float:
+                                stream_out_scale_factor = [stream_out_scale_factor] * 2
+                            with rasterio.open(band_output) as src:
+                                profile = src.profile
+                                stream_out_shape = (
+                                    int(profile["height"] * stream_out_scale_factor[0]),
+                                    int(profile["width"] * stream_out_scale_factor[1]),
+                                )
+                                band_img = src.read(
+                                    out_shape=(src.count, *stream_out_shape),
+                                    resampling=stream_reshape_method,
+                                )
+                                bounds = src.bounds
+                                crs = src.crs
+                            band_meta = {"profile": profile, "bounds": bounds, "crs": crs}
+                        else:
+                            band_img, band_meta = stream_scene(
+                                band_url,
+                                aws_session,
+                                scale_factor=stream_out_scale_factor,
+                                reshape_method=stream_reshape_method,
+                                round_transform=stream_round_transform,
                             )
-                            bounds = src.bounds
-                            crs = src.crs
-                        band_meta = {"profile": profile, "bounds": bounds, "crs": crs}
-                    else:
-                        band_img, band_meta = stream_scene(
-                            band_url,
-                            aws_session,
-                            scale_factor=stream_out_scale_factor,
-                            reshape_method=stream_reshape_method,
-                            round_transform=stream_round_transform,
-                        )
-                        with rasterio.open(
-                            band_output, "w", **band_meta["profile"]
-                        ) as ds:
-                            for i in range(band_meta["profile"]["count"]):
-                                ds.write(band_img[i, :, :], i + 1)
+                            with rasterio.open(
+                                band_output, "w", **band_meta["profile"]
+                            ) as ds:
+                                for i in range(band_meta["profile"]["count"]):
+                                    ds.write(band_img[i, :, :], i + 1)
+                    except Exception as e:
+                        print(f"Error downloading band {band} from {band_url}. Not processing.")
+                        break
 
         if download_only:
             el["local_path"] = proc_file
