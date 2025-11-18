@@ -4083,6 +4083,7 @@ def download_files(
     local_paths: list[str],
     num_tasks: int = 8,
     is_async_download: bool = False,
+    verbose: bool = True,
 ):
     """Downloads files from S3 bucket to local paths.
 
@@ -4098,6 +4099,8 @@ def download_files(
         Number of tasks to run in parallel, by default 8.
     is_async_download : bool, optional
         Is the download asynchronous, by default False.
+    verbose : bool, optional
+        Verbosity flag, by default True.
     """
     s3_client = boto3.client("s3")
 
@@ -4112,7 +4115,8 @@ def download_files(
             asyncio.run(async_download(ch, bucket_name, s3_client))
         else:
             download(ch, bucket_name, s3_client)
-        print(f"Chunk {i + 1} downloaded")
+        if verbose:
+            print(f"Chunk {i + 1} downloaded")
 
 
 def karios(
@@ -4727,6 +4731,7 @@ def download_and_process_series(
     stream_round_transform: bool = True,
     fill_nodata: bool = False,
     fill_nodata_max_threshold: int = 10,
+    alternate_download: bool = False,
 ) -> list:
     """Downloads and processes a series of scenes from AWS S3, creating composite images from the specified bands.
 
@@ -4798,6 +4803,8 @@ def download_and_process_series(
         If True, fills nodata values in the streamed data using inverse distance weighting interpolation.
     fill_nodata_max_threshold: int = 10
         Maximum size of nodata regions to fill when `fill_nodata` is True.
+    alternate_download : bool, optional
+        If True, uses alternate download method for the bands, by default False
 
     Returns
     -------
@@ -4886,6 +4893,10 @@ def download_and_process_series(
             to_download = bands.copy()
             if extra_bands is not None:
                 to_download.extend(extra_bands)
+            if alternate_download:
+                print(
+                    f"Downloading bands using alternate method. It might take longer..."
+                )
             for band in to_download:
                 if band not in el:
                     raise ValueError(f"Band {band} not found in the scene data.")
@@ -4897,16 +4908,42 @@ def download_and_process_series(
                 if os.path.isfile(band_output):
                     print(f"Original file for {band} band already exists, skipping.")
                 else:
-                    band_img, band_meta = stream_scene(
-                        band_url,
-                        aws_session,
-                        scale_factor=stream_out_scale_factor,
-                        reshape_method=stream_reshape_method,
-                        round_transform=stream_round_transform,
-                    )
-                    with rasterio.open(band_output, "w", **band_meta["profile"]) as ds:
-                        for i in range(band_meta["profile"]["count"]):
-                            ds.write(band_img[i, :, :], i + 1)
+                    if alternate_download:
+                        bucket = band_url.split("//")[1].split("/")[0]
+                        download_files(
+                            bucket,
+                            [band_url],
+                            [band_output],
+                            verbose=False,
+                        )
+                        if type(stream_out_scale_factor) == float:
+                            stream_out_scale_factor = [stream_out_scale_factor] * 2
+                        with rasterio.open(band_output) as src:
+                            profile = src.profile
+                            stream_out_shape = (
+                                int(profile["height"] * stream_out_scale_factor[0]),
+                                int(profile["width"] * stream_out_scale_factor[1]),
+                            )
+                            band_img = src.read(
+                                out_shape=(src.count, *stream_out_shape),
+                                resampling=stream_reshape_method,
+                            )
+                            bounds = src.bounds
+                            crs = src.crs
+                        band_meta = {"profile": profile, "bounds": bounds, "crs": crs}
+                    else:
+                        band_img, band_meta = stream_scene(
+                            band_url,
+                            aws_session,
+                            scale_factor=stream_out_scale_factor,
+                            reshape_method=stream_reshape_method,
+                            round_transform=stream_round_transform,
+                        )
+                        with rasterio.open(
+                            band_output, "w", **band_meta["profile"]
+                        ) as ds:
+                            for i in range(band_meta["profile"]["count"]):
+                                ds.write(band_img[i, :, :], i + 1)
 
         if download_only:
             el["local_path"] = proc_file
