@@ -4508,6 +4508,7 @@ def process_existing_outputs(
     reference_band_number: int | None = None,
     fill_nodata: bool = False,
     fill_nodata_max_threshold: int = 10,
+    preserve_directory_structure: bool = False,
 ) -> None:
     """Processes existing files into composite scenes and saves them to the specified output directory.
 
@@ -4553,6 +4554,8 @@ def process_existing_outputs(
         Whether to write image pairs to the output directory, by default True
     reference_band_number : int | None, optional
         Reference band number for the reprojecting and resampling the images to the reference image, by default None
+    preserve_directory_structure: bool = False,
+        Whether to preserve the directory structure of the existing files in the output directory, by default False
     """
     os.makedirs(output_dir, exist_ok=True)
 
@@ -4576,7 +4579,13 @@ def process_existing_outputs(
     proc_for_ds = []
     for file in existing_files:
         if type(file) is str:
-            proc_file = os.path.join(process_dir, os.path.basename(file))
+            if preserve_directory_structure:
+                proc_name = os.path.dirname(file)[
+                    re.search("Originals", os.path.dirname(file)).end() + 1 :
+                ]
+            else:
+                proc_name = os.path.basename(file)
+            proc_file = os.path.join(process_dir, proc_name)
         else:
             ext = os.path.splitext(file[0])[1]
             originals_dir = os.path.basename(os.path.dirname(file[0]))
@@ -4591,7 +4600,21 @@ def process_existing_outputs(
                 suffix_to_add = f"{suffix_list[0]}_{filename_suffix}"
             else:
                 suffix_to_add = filename_suffix
-            proc_file = f"{os.path.join(process_dir, os.path.basename(originals_dir))}_{suffix_to_add}{ext}"
+
+            if preserve_directory_structure:
+                dir_structure = os.path.dirname(file[0])[
+                    re.search("Originals", os.path.dirname(file[0])).end() + 1 :
+                ]
+                os.makedirs(
+                    os.path.join(process_dir, os.path.dirname(dir_structure)),
+                    exist_ok=True,
+                )
+                proc_file = os.path.join(
+                    process_dir,
+                    f"{dir_structure}_{suffix_to_add}{ext}",
+                )
+            else:
+                proc_file = f"{os.path.join(process_dir, os.path.basename(originals_dir))}_{suffix_to_add}{ext}"
 
         proc_file_ds = os.path.join(process_ds_dir, os.path.basename(proc_file))
         proc_files.append(proc_file)
@@ -4926,6 +4949,7 @@ def download_and_process_series(
                                 band_output,
                                 round_resolution=stream_round_transform,
                                 resampling=stream_reshape_method,
+                                masked_data=True,
                             )
                             with rasterio.open(band_output) as ds:
                                 band_img = ds.read()
