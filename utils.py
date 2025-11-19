@@ -4854,7 +4854,7 @@ def download_and_process_series(
         )
         originals_dir = f"{output_dir}/Originals/{el['scene_name']}"
         if scene_name_map is not None:
-            el["scene_name"] = scene_name_map(el["scene_name"])
+            el["scene_name"] = scene_name_map(el)
         new_originals_dir = f"{output_dir}/Originals/{el['scene_name']}"
         os.makedirs(new_originals_dir, exist_ok=True)
 
