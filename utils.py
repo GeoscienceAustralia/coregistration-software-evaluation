@@ -1432,9 +1432,19 @@ def make_mosaic(
         to_return = (warps, masks)
         if masking_edge_scene_count:
             if cluster_masks:
-                to_return = (warps, masks, mask_per_cluster, edge_scene_count)
+                to_return = (
+                    warps,
+                    masks,
+                    mask_per_cluster,
+                    {"edge_counts": edge_scene_count, "class_dict": masks_dict},
+                )
             else:
-                to_return = (warps, masks, universal_mask, edge_scene_count)
+                to_return = (
+                    warps,
+                    masks,
+                    universal_mask,
+                    {"edge_counts": edge_scene_count},
+                )
 
     return (
         mosaic,
