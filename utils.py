@@ -1486,6 +1486,9 @@ def make_difference_gif(
     thickness: int = 3,
     color: tuple = (255, 0, 0),
     origin: tuple = (5, 50),
+    draw_circles: list[tuple] | None = None,
+    circles_color: tuple = (0, 255, 0),
+    circles_thickness: int = 2,
 ) -> None:
     """Makes a GIF from a list of images with titles and optional scaling.
 
@@ -1515,6 +1518,16 @@ def make_difference_gif(
         Color of the text for titles, by default (255, 0, 0)
     origin : tuple, optional
         Origin point for the text placement, by default (5, 50)
+    draw_circles : list[tuple] | None, optional
+        List of circle parameters (x, y, radius) to draw on each image, by default None
+    circles_color : tuple, optional
+        Color of the circles to be drawn, by default (0, 255, 0)
+    circles_thickness : int, optional
+        Thickness of the circles to be drawn, by default 2
+
+    Returns
+    -------
+    None
     """
     os.makedirs("temp", exist_ok=True)
     temp_paths = [os.path.join("temp", os.path.basename(f)) for f in images_list]
@@ -1532,27 +1545,14 @@ def make_difference_gif(
     else:
         titles_list = [os.path.splitext(os.path.basename(f))[0] for f in images_list]
 
-    images = []
     font = cv.FONT_HERSHEY_SIMPLEX
     if mosaic_scenes:
-        _, warps, _ = make_mosaic(
+        _, temp_images, _ = make_mosaic(
             temp_paths,
             mosaic_offsets_x,
             mosaic_offsets_y,
             return_warps=True,
         )
-        for i, warp in enumerate(warps):
-            cv.putText(
-                warp,
-                titles_list[i],
-                origin,
-                font,
-                font_scale,
-                color,
-                thickness,
-                cv.LINE_AA,
-            )
-            images.append(warp)
     else:
         temp_images = []
         transforms = []
@@ -1565,18 +1565,28 @@ def make_difference_gif(
                 img = img[:, :, 0]
             temp_images.append(img)
 
-        for i, img in enumerate(temp_images):
-            cv.putText(
-                img,
-                titles_list[i],
-                origin,
-                font,
-                font_scale,
-                color,
-                thickness,
-                cv.LINE_AA,
-            )
-            images.append(img)
+    images = []
+    for i, temp_image in enumerate(temp_images):
+        cv.putText(
+            temp_image,
+            titles_list[i],
+            origin,
+            font,
+            font_scale,
+            color,
+            thickness,
+            cv.LINE_AA,
+        )
+        if draw_circles is not None:
+            for circle_params in draw_circles:
+                cv.circle(
+                    temp_image,
+                    (circle_params[0], circle_params[1]),
+                    circle_params[2],
+                    circles_color,
+                    circles_thickness,
+                )
+        images.append(temp_image)
 
     imageio.mimwrite(output_path, images, loop=0, fps=fps)
     shutil.rmtree("temp", ignore_errors=True)
@@ -3878,6 +3888,9 @@ def generate_results_from_raw_inputs(
     output_name: str = "output",
     target_ids: list | None = None,
     gif_fps: int = 3,
+    draw_circles: list[tuple] | None = None,
+    circles_color: tuple = (0, 255, 0),
+    circles_thickness: int = 2,
 ) -> None:
     """Generates results from raw inputs by creating GIFs and CSV files.
 
@@ -3901,6 +3914,12 @@ def generate_results_from_raw_inputs(
         Ids of the processed target images, by default None.
     gif_fps : int, optional
         Frames per second for the output GIFs, by default 3. If set to 0, no GIFs will be created.
+    draw_circles : list[tuple] | None, optional
+        List of circles to draw on the images, each circle is a tuple of (x, y, radius), by default None.
+    circles_color : tuple, optional
+        Color of the circles to draw on the images in BGR format, by default (0, 255, 0).
+    circles_thickness : int, optional
+        Thickness of the circles to draw on the images, by default 2.
 
     Returns
     -------
@@ -3957,6 +3976,9 @@ def generate_results_from_raw_inputs(
             datasets_titles,
             mosaic_scenes=True,
             fps=gif_fps,
+            draw_circles=draw_circles,
+            circles_color=circles_color,
+            circles_thickness=circles_thickness,
         )
 
     tgt_raw_list = []
@@ -3998,6 +4020,9 @@ def generate_results_from_raw_inputs(
             datasets_titles,
             mosaic_scenes=True,
             fps=gif_fps,
+            draw_circles=draw_circles,
+            circles_color=circles_color,
+            circles_thickness=circles_thickness,
         )
 
     output_path = os.path.join(output_dir, f"{output_name}.csv")
