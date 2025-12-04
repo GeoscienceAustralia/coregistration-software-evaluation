@@ -5295,6 +5295,7 @@ def download_and_process_pairs(
 def combine_comparison_results(
     root_output: str,
     dir_suffix: str | None = None,
+    coreg_methods: list[str] | None = None,
 ) -> pd.DataFrame:
     """Creates a Dataframe with the results of the co-registration methods.
 
@@ -5304,6 +5305,8 @@ def combine_comparison_results(
         Output directory where the results are stored.
     dir_suffix : str | None, optional
         Suffix for the directory names, by default None
+    methods : list[str] | None, optional
+        List of methods to include, by default None
 
     Returns
     -------
@@ -5313,87 +5316,30 @@ def combine_comparison_results(
 
     dir_suffix = f"_{dir_suffix}" if dir_suffix else ""
 
-    methods = []
     df_list = []
     col_names = ["Title", "SSIM Raw", "MSE Raw", "ZNCC Raw"]
-    try:
+    if coreg_methods is None:
+        coreg_methods = ["Co-Register", "Karios", "AROSICS", "AROSICS Edge"]
+
+    methods = []
+    for method in coreg_methods:
         try:
-            coreg_df = pd.read_csv(f"{root_output}/Co_Register{dir_suffix}/output.csv")
-        except:
-            coreg_df = pd.read_csv(
-                f"{root_output}/Co_Register{dir_suffix}_lpc/output.csv"
+            coreg_df = pd.read_csv(f"{root_output}/{method}{dir_suffix}/output.csv")
+            coreg_df["Method"] = [method] * len(coreg_df)
+            methods.append(method)
+            df_list.append(coreg_df)
+            col_names.extend(
+                [
+                    f"{method} SSIM Aligned",
+                    f"{method} MSE Aligned",
+                    f"{method} ZNCC Aligned",
+                    f"{method} Run Time",
+                    f"{method} Shifts",
+                    f"{method} Defaults",
+                ]
             )
-        coreg_df["Method"] = ["Co-Register"] * len(coreg_df)
-        df_list.append(coreg_df)
-        methods.append("Co-Register")
-        col_names.extend(
-            [
-                "Co-Register SSIM Aligned",
-                "Co-Register MSE Aligned",
-                "Co-Register ZNCC Aligned",
-                "Co-Register Run Time",
-                "Co-Register Shifts",
-                "Co-Register Defaults",
-            ]
-        )
-    except:
-        print("Co-Register results not found, skipping.")
-
-    try:
-        karios_df = pd.read_csv(f"{root_output}/Karios{dir_suffix}/output.csv")
-        karios_df["Method"] = ["Karios"] * len(karios_df)
-        df_list.append(karios_df)
-        methods.append("Karios")
-        col_names.extend(
-            [
-                "Karios SSIM Aligned",
-                "Karios MSE Aligned",
-                "Karios ZNCC Aligned",
-                "Karios Run Time",
-                "Karios Shifts",
-                "Karios Defaults",
-            ]
-        )
-    except:
-        print("Karios results not found, skipping.")
-
-    try:
-        arosics_df = pd.read_csv(f"{root_output}/AROSICS{dir_suffix}/output.csv")
-        arosics_df["Method"] = ["AROSICS"] * len(arosics_df)
-        df_list.append(arosics_df)
-        methods.append("AROSICS")
-        col_names.extend(
-            [
-                "AROSICS SSIM Aligned",
-                "AROSICS MSE Aligned",
-                "AROSICS ZNCC Aligned",
-                "AROSICS Run Time",
-                "AROSICS Shifts",
-                "AROSICS Defaults",
-            ]
-        )
-    except:
-        print("AROSICS results not found, skipping.")
-
-    try:
-        arosics_edge_df = pd.read_csv(
-            f"{root_output}/AROSICS_edge{dir_suffix}/output.csv"
-        )
-        arosics_edge_df["Method"] = ["AROSICS Edge"] * len(arosics_edge_df)
-        df_list.append(arosics_edge_df)
-        methods.append("AROSICS Edge")
-        col_names.extend(
-            [
-                "AROSICS Edge SSIM Aligned",
-                "AROSICS Edge MSE Aligned",
-                "AROSICS Edge ZNCC Aligned",
-                "AROSICS Edge Run Time",
-                "AROSICS Edge Shifts",
-                "AROSICS Edge Defaults",
-            ]
-        )
-    except:
-        print("AROSICS Edge results not found, skipping.")
+        except:
+            print(f"{method} results not found, skipping.")
 
     if len(df_list) == 0:
         print("No results found, cannot combine.")
@@ -5408,60 +5354,43 @@ def combine_comparison_results(
         .drop("Unnamed: 0", axis=1)
     )
 
-    target_0 = []
-    target_1 = []
+    targets = []
+    for i in range(len(output_dfs["Title"].unique())):
+        target = []
 
-    target_0.extend(["target_0"])
-    target_1.extend(["target_1"])
+        target.extend([f"target_{i}"])
 
-    for df in df_list:
-        try:
-            target_0.extend(
-                df[df["Title"] == "target_0"][["SSIM Raw", "MSE Raw", "ZNCC Raw"]]
-                .values[0]
-                .tolist()
+        for df in df_list:
+            try:
+                target.extend(
+                    df[df["Title"] == f"target_{i}"][
+                        ["SSIM Raw", "MSE Raw", "ZNCC Raw"]
+                    ]
+                    .values[0]
+                    .tolist()
+                )
+                break
+            except:
+                continue
+
+        for method in methods:
+            method_slice = output_dfs[output_dfs["Method"] == method].drop(
+                "Method", axis=1
             )
-            break
-        except:
-            continue
 
-    for df in df_list:
-        try:
-            target_1.extend(
-                df[df["Title"] == "target_1"][["SSIM Raw", "MSE Raw", "ZNCC Raw"]]
-                .values[0]
-                .tolist()
-            )
-            break
-        except:
-            continue
+            target_vals = method_slice[method_slice["Title"] == f"target_{i}"]
+            if target_vals.empty:
+                target.extend(["Failed"] * 5)
+            else:
+                target.extend(target_vals.values[0][4:].tolist())
+            if i in range(3):  # Co-Register, Karios, AROSICS
+                target.extend([True])
+            else:
+                target.extend([False])
 
-    for i, method in enumerate(methods):
-        method_slice = output_dfs[output_dfs["Method"] == method].drop("Method", axis=1)
+        targets.append(target)
 
-        target_0_vals = method_slice[method_slice["Title"] == "target_0"]
-        if target_0_vals.empty:
-            target_0.extend(["Failed"] * 5)
-        else:
-            target_0.extend(target_0_vals.values[0][4:].tolist())
-
-        if i in range(3):  # Co-Register, Karios, AROSICS
-            target_0.extend([True])
-        else:
-            target_0.extend([False])
-
-        target_1_vals = method_slice[method_slice["Title"] == "target_1"]
-        if target_1_vals.empty:
-            target_1.extend(["Failed"] * 5)
-        else:
-            target_1.extend(target_1_vals.values[0][4:].tolist())
-
-        if i in range(3):  # Co-Register, Karios, AROSICS
-            target_1.extend([True])
-        else:
-            target_1.extend([False])
-
-    out_df = pd.DataFrame([target_0, target_1], columns=col_names)
+    out_df = pd.DataFrame(targets, columns=col_names)
     out_df.to_csv(
         f"{root_output}/co_registration_results{dir_suffix}.csv",
         index=False,
