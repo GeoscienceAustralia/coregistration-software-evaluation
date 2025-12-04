@@ -4409,37 +4409,37 @@ def arosics(
     shifts = []
     print(f"Reference image: {ref_image}")
     for i, tgt_image in enumerate(tgt_images_copy):
-        print(f"Coregistering {tgt_image}")
-        coreg_local = COREG_LOCAL(
-            im_ref=ref_image,
-            im_tgt=tgt_image,
-            grid_res=grid_res,
-            max_points=max_points,
-            path_out=local_outputs[i],
-            fmt_out="GTIFF",
-            nodata=(0.0, 0.0),
-            r_b4match=r_b4match,
-            s_b4match=s_b4match,
-            align_grids=True,
-            max_iter=max_iter,
-            max_shift=max_shift,
-            ignore_errors=True,
-            min_reliability=min_reliability,
-            tieP_filter_level=tieP_filter_level,
-            rs_max_outlier=rs_max_outlier,
-            rs_tolerance=rs_tolerance,
-            footprint_poly_ref=(
-                None
-                if existing_ref_image is None
-                else box(*rasterio.open(existing_ref_image).bounds).wkt
-            ),
-            footprint_poly_tgt=(
-                None
-                if existing_tgt_images is None
-                else box(*rasterio.open(existing_tgt_images[i]).bounds).wkt
-            ),
-        )
         try:
+            print(f"Coregistering {tgt_image}")
+            coreg_local = COREG_LOCAL(
+                im_ref=ref_image,
+                im_tgt=tgt_image,
+                grid_res=grid_res,
+                max_points=max_points,
+                path_out=local_outputs[i],
+                fmt_out="GTIFF",
+                nodata=(0.0, 0.0),
+                r_b4match=r_b4match,
+                s_b4match=s_b4match,
+                align_grids=True,
+                max_iter=max_iter,
+                max_shift=max_shift,
+                ignore_errors=True,
+                min_reliability=min_reliability,
+                tieP_filter_level=tieP_filter_level,
+                rs_max_outlier=rs_max_outlier,
+                rs_tolerance=rs_tolerance,
+                footprint_poly_ref=(
+                    None
+                    if existing_ref_image is None
+                    else box(*rasterio.open(existing_ref_image).bounds).wkt
+                ),
+                footprint_poly_tgt=(
+                    None
+                    if existing_tgt_images is None
+                    else box(*rasterio.open(existing_tgt_images[i]).bounds).wkt
+                ),
+            )
             coreg_local.correct_shifts()
             if not coreg_local.success:
                 print(f"Coregistration was not successfull for {tgt_image}.")
