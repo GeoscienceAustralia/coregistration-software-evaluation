@@ -780,6 +780,9 @@ def find_overlap(
     raster_1 = rasterio.open(dataset_1)
     raster_2 = rasterio.open(dataset_2)
 
+    original_dataset_1 = dataset_1
+    original_dataset_2 = dataset_2
+
     bounds_1 = raster_1.bounds
     bounds_2 = raster_2.bounds
 
@@ -914,14 +917,14 @@ def find_overlap(
             raster_overlap_1 = np.expand_dims(raster_overlap_1, axis=2)
             raster_overlap_2 = np.expand_dims(raster_overlap_2, axis=2)
         with rasterio.open(
-            os.path.join(output_dir, os.path.basename(dataset_1)),
+            os.path.join(output_dir, os.path.basename(original_dataset_1)),
             "w",
             **overlap_profile,
         ) as dst:
             for i in range(overlap_profile["count"]):
                 dst.write(raster_overlap_1[:, :, i], i + 1)
         with rasterio.open(
-            os.path.join(output_dir, os.path.basename(dataset_2)),
+            os.path.join(output_dir, os.path.basename(original_dataset_2)),
             "w",
             **overlap_profile,
         ) as dst:

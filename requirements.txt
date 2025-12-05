@@ -34,3 +34,4 @@ odc-geo
 pykrige
 arosics
 geojson
+planetary-computer
