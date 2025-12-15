@@ -1492,6 +1492,9 @@ def make_difference_gif(
     draw_circles: list[tuple] | None = None,
     circles_color: tuple = (0, 255, 0),
     circles_thickness: int = 2,
+    bbox: tuple | None = None,
+    bbox_crs: int | None = None,
+    use_geometry: bool = False,
 ) -> None:
     """Makes a GIF from a list of images with titles and optional scaling.
 
@@ -1527,6 +1530,12 @@ def make_difference_gif(
         Color of the circles to be drawn, by default (0, 255, 0)
     circles_thickness : int, optional
         Thickness of the circles to be drawn, by default 2
+    bbox : tuple | None, optional
+        Bounding box (min_x, min_y, max_x, max_y) to crop the images, by default None
+    bbox_crs : int | None, optional
+        CRS of the bounding box, by default None
+    use_geometry : bool, optional
+        Whether to use geometry for cropping, by default False
 
     Returns
     -------
@@ -1540,6 +1549,16 @@ def make_difference_gif(
             downsample_dataset(images_list[i], scale_factor, p)
     else:
         temp_paths = images_list
+
+    cropped_paths = temp_paths.copy()
+    if bbox is not None:
+        for i, p in enumerate(cropped_paths):
+            cropped = crop_dataset_to_bounding_box(
+                p, rasterio.open(p).crs.to_epsg(), bbox, bbox_crs, use_geometry, p
+            )
+            if cropped is None:
+                os.remove(p)
+                temp_paths.pop(i)
 
     if len(titles_list) > 0:
         assert len(titles_list) == len(
@@ -5690,6 +5709,81 @@ def create_dataset_from_files(
 
     if optimize_dataset:
         ds = optimize(ds)[0]
+    return ds
+
+
+def crop_dataset_to_bounding_box(
+    ds: xr.Dataset | str,
+    crs: int | None = None,
+    bbox: list | None = None,
+    bbox_crs: int | None = None,
+    use_geometry: bool = False,
+    output_path: str | None = None,
+):
+    """Crops the given xarray dataset to the provided bounding box.
+
+    parameters
+    ----------
+    ds : xr.Dataset | str
+        The xarray dataset or path to the raster file to be cropped.
+    crs : int | None, optional
+        Coordinate reference system to assign to the dataset, by default None.
+    bbox : list | None, optional
+        Bounding box to which to crop the dataset in the form [minx, miny, maxx, maxy], by default None.
+    bbox_crs : int | None, optional
+        CRS of the bounding box, required if bbox is provided, by default None.
+    use_geometry : bool, optional
+        Whether to use the geometry for clipping, by default False.
+    output_path : str | None, optional
+        Path to save the cropped dataset, by default None.
+
+    Returns
+    -------
+    xr.Dataset | None
+        The cropped xarray dataset.
+
+    Raises
+    ------
+    ValueError
+        If CRS is not provided.
+    """
+    if crs is None:
+        raise ValueError("CRS must be provided.")
+
+    if type(ds) is str:
+        ds = rxr.open_rasterio(ds)
+        ds["spatial_ref"] = np.int32(crs)
+        ds = ds.rio.write_crs(f"epsg:{crs}")
+
+    if use_geometry:
+        bbox = [
+            reproject_box_to_geojson(
+                bbox,
+                src_crs=bbox_crs if bbox_crs is not None else crs,
+                dst_crs=crs,
+            )
+        ]
+    else:
+        bbox = reproject_bounds(
+            [bbox],
+            source_crs=bbox_crs if bbox_crs is not None else crs,
+            dest_crs=crs,
+        )[0]
+
+    try:
+        if use_geometry:
+            print("Clipping dataset to the provided geometry.")
+            ds = ds.rio.clip(bbox, all_touched=True)
+        else:
+            print("Clipping dataset to the provided bounding box.")
+            ds = ds.rio.clip_box(*bbox)
+    except Exception as e:
+        print(f"Error clipping dataset: {e}")
+        return None
+
+    if output_path:
+        ds.rio.to_raster(output_path)
+
     return ds
 
 
